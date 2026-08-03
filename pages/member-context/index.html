@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>群成员身份上下文</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-frame">
+      <header class="masthead">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true">AB<br />CTX</div>
+          <div>
+            <p class="brand-kicker">ASTRBOT / LOCAL WORKBENCH</p>
+            <strong class="brand-title">GROUP MEMBER CONTEXT</strong>
+          </div>
+        </div>
+        <div class="masthead-status" aria-label="插件状态">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>LOCAL CONTEXT ROUTER</span>
+          <strong>READY</strong>
+        </div>
+      </header>
+
+      <main class="app-shell">
+      <header class="page-header">
+        <div class="hero-copy">
+          <p class="eyebrow">IDENTITY REFERENCE / GROUP WORKBENCH</p>
+          <h1>群成员身份上下文</h1>
+          <p class="subtitle">
+            为每个 QQ 群维护可核对的身份资料，让模型在当前对话窗口内准确理解“这个名字是谁”。
+          </p>
+        </div>
+        <div class="hero-meta">
+          <p class="hero-code">INPUT / GROUP<br />IDENTITY / PROMPT</p>
+          <button id="refresh-groups" class="button button-secondary" type="button">
+            刷新群列表
+          </button>
+        </div>
+      </header>
+
+      <div class="section-rule" aria-hidden="true"></div>
+      <div id="notice" class="notice" role="status" aria-live="polite"></div>
+
+      <div
+        id="reset-confirmation"
+        class="reset-confirmation hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-hidden="true"
+        aria-labelledby="reset-confirm-title"
+        aria-describedby="reset-confirm-description"
+      >
+        <section class="reset-dialog">
+          <p class="dialog-kicker">DESTRUCTIVE ACTION / CONFIRM</p>
+          <h2 id="reset-confirm-title">确认完全重置</h2>
+          <p id="reset-confirm-group" class="reset-confirm-group"></p>
+          <p id="reset-confirm-description" class="reset-confirm-description">
+            将清空本群所有成员的外号、真名、自定义昵称、自定义字段值、补充说明和本群 Prompt。
+            群成员列表、平台昵称、群名片和全局字段名称会保留，此操作不可撤销。
+          </p>
+          <div class="reset-dialog-actions">
+            <button id="cancel-reset" class="button button-secondary" type="button">取消</button>
+            <button id="confirm-reset" class="button button-danger" type="button">确认重置</button>
+          </div>
+        </section>
+      </div>
+
+      <section class="workspace-grid">
+        <aside class="panel group-panel">
+          <div class="panel-heading">
+            <div class="section-heading">
+              <span class="section-index">01</span>
+              <div>
+                <p class="section-kicker">SESSION SELECTOR</p>
+                <h2>选择群会话</h2>
+                <p id="group-count" class="muted">正在读取…</p>
+              </div>
+            </div>
+          </div>
+          <label class="field-label field-label-large" for="group-select">QQ 群 / SESSION</label>
+          <select id="group-select" class="select-input" aria-describedby="group-help">
+            <option value="">请选择一个群</option>
+          </select>
+          <p id="group-help" class="help-text">
+            列表来自已连接的 OneBot V11/aiocqhttp 平台；离线群会保留在列表中，恢复连接后可重新导入。
+          </p>
+          <div id="group-errors" class="inline-errors"></div>
+        </aside>
+
+        <section class="panel editor-panel" aria-live="polite">
+          <div id="empty-state" class="empty-state">
+            <div class="empty-icon">OPEN<br />01</div>
+            <h2>先选择一个 QQ 群</h2>
+            <p>选择群后点击“导入成员”，只为需要说明身份的成员填写资料；未编辑成员不会进入上下文。</p>
+          </div>
+
+          <div id="editor" class="hidden">
+            <div class="panel-heading editor-heading">
+              <div class="section-heading">
+                <span class="section-index">02</span>
+                <div>
+                  <p class="section-kicker">MEMBER IDENTITY ROUTER</p>
+                  <h2 id="selected-group-name">—</h2>
+                  <p id="selected-group-meta" class="muted"></p>
+                </div>
+              </div>
+              <div class="editor-actions">
+                <span class="editor-state">CONFIGURATION / ACTIVE</span>
+                <div class="editor-action-buttons">
+                  <button id="reset-profile" class="button button-small button-danger" type="button">
+                    完全重置
+                  </button>
+                  <button id="load-members" class="button button-secondary" type="button">
+                    导入成员
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="member-toolbar">
+              <div class="toolbar-title">
+                <span class="toolbar-index">03</span>
+                <span id="member-count" class="muted">尚未导入成员</span>
+              </div>
+              <div class="member-toolbar-actions">
+                <span class="toolbar-tip">字段支持多值 · Enter 添加</span>
+                <div class="member-search">
+                  <label class="sr-only" for="member-search">搜索群成员</label>
+                  <input
+                    id="member-search"
+                    class="text-input member-search-input"
+                    type="search"
+                    placeholder="搜索平台昵称 / QQ号 / 群名片"
+                    autocomplete="off"
+                  />
+                  <button id="clear-member-search" class="button button-small button-secondary" type="button">
+                    清除
+                  </button>
+                </div>
+              </div>
+            </div>
+            <section class="custom-fields-panel">
+              <div class="preview-heading">
+                <div class="subsection-heading">
+                  <span class="subsection-index">A</span>
+                  <h3>全局自定义身份字段</h3>
+                </div>
+                <span class="muted">所有群会话共用字段名</span>
+              </div>
+              <p class="help-text">
+                先添加字段名，例如“花名”“游戏名”；保存后，每位成员都会显示对应填写项，并按“字段名：内容”注入 Prompt。
+              </p>
+              <div id="custom-identity-fields" class="term-list custom-identity-fields"></div>
+              <div class="custom-field-add">
+                <label class="sr-only" for="custom-identity-field-input">添加自定义身份字段</label>
+                <input
+                  id="custom-identity-field-input"
+                  class="text-input"
+                  type="text"
+                  maxlength="32"
+                  placeholder="例如：游戏名"
+                  autocomplete="off"
+                />
+                <button id="add-custom-identity-field" class="button button-small button-secondary" type="button">
+                  添加字段
+                </button>
+              </div>
+            </section>
+            <p class="help-text window-config-hint">
+              最近消息窗口数量由 AstrBot 插件配置中的“动态成员消息窗口数量”统一控制；范围为 1～200。
+            </p>
+            <div class="member-directory-controls">
+              <div class="directory-filter">
+                <button
+                  id="configured-filter"
+                  class="button button-small button-filter"
+                  type="button"
+                  aria-pressed="false"
+                >
+                  仅显示已配置
+                </button>
+                <span id="page-status" class="muted page-status"></span>
+              </div>
+              <label class="page-size-control" for="member-page-size">
+                <span>每页显示</span>
+                <select id="member-page-size" class="select-input">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+                <span>名</span>
+              </label>
+            </div>
+            <nav id="member-pagination-top" class="member-pagination member-pagination-top hidden" aria-label="群成员分页">
+              <button id="previous-page-top" class="button button-small page-nav" type="button">
+                上一页
+              </button>
+              <div id="page-numbers-top" class="page-numbers"></div>
+              <button id="next-page-top" class="button button-small page-nav" type="button">
+                下一页
+              </button>
+            </nav>
+            <div id="members" class="members-list"></div>
+            <nav id="member-pagination" class="member-pagination hidden" aria-label="群成员分页">
+              <button id="previous-page" class="button button-small page-nav" type="button">
+                上一页
+              </button>
+              <div id="page-numbers" class="page-numbers"></div>
+              <button id="next-page" class="button button-small page-nav" type="button">
+                下一页
+              </button>
+            </nav>
+
+            <section class="custom-prompt-panel">
+              <div class="preview-heading">
+                <div class="subsection-heading">
+                  <span class="subsection-index">B</span>
+                  <h3>本群自定义 Prompt</h3>
+                </div>
+                <span class="muted">仅当前群会话生效</span>
+              </div>
+              <label class="field-label" for="custom-prompt">Prompt 内容</label>
+              <textarea
+                id="custom-prompt"
+                class="text-input custom-prompt-input"
+                rows="6"
+                placeholder="例如：本群讨论技术问题时优先给出可执行步骤；不确定的信息请明确说明。"
+              ></textarea>
+              <p class="help-text">
+                可填写本群专属的背景、表达偏好或处理规则。内容会和成员身份映射一起注入当前群，不会影响其他群。
+              </p>
+            </section>
+
+            <div class="save-bar">
+              <button id="preview-prompt" class="button button-secondary" type="button">
+                预览注入 Prompt
+              </button>
+              <button id="save-profile" class="button button-primary" type="button">
+                保存本群设定
+              </button>
+            </div>
+
+            <section class="prompt-preview">
+              <div class="preview-heading">
+                <div class="subsection-heading">
+                  <span class="subsection-index">C</span>
+                  <h3>Prompt 预览</h3>
+                </div>
+                <span class="muted">实际注入会按最近 N 条消息筛选发言成员和消息中提到的已配置成员</span>
+              </div>
+              <pre id="prompt-output">保存或预览后显示。</pre>
+            </section>
+          </div>
+        </section>
+      </section>
+      </main>
+      <footer class="app-footer">
+        <span>FIELD NOTE / SESSION-SCOPED IDENTITY DATA</span>
+        <span>ASTRBOT PLUGIN PAGE / 01—03</span>
+      </footer>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

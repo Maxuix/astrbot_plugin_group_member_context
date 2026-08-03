@@ -1,14 +1,37 @@
-# astrbot-plugin-helloworld
+# 群成员身份上下文
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+这是一个面向 AstrBot 4.27.x 的插件。它通过 WebUI Page 为每个 OneBot V11/`aiocqhttp` QQ 群维护成员身份资料，并在 LLM 请求前根据最近群消息中的发言成员和消息中提到的成员动态追加临时上下文。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+## 安装
 
-# Supports
+可以从 AstrBot 插件市场安装，也可以将本仓库目录复制到 AstrBot 的 `data/plugins/astrbot_plugin_group_member_context/`。安装或更新后重载插件；首次使用时请确认已连接 OneBot V11/`aiocqhttp` 平台。
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+## 本地使用
+
+将本目录放入 AstrBot 的 `data/plugins/astrbot_plugin_group_member_context/`，启动 AstrBot 后在 WebUI 的插件详情页打开“群成员身份上下文”页面。
+
+使用前需要：
+
+1. 启用并连接 OneBot V11/`aiocqhttp` 平台。
+2. 在页面选择群并点击“导入成员”。
+3. 分别填写成员的外号、真名、自定义昵称和备注，并保存本群设定。
+4. 在 AstrBot 插件配置菜单中设置“动态成员消息窗口数量”（默认 20，范围 1～200）和“LLM 注入日志详细程度”（摘要/全部）。
+5. 按需填写“本群自定义 Prompt”，为当前群补充背景、表达偏好或处理规则。
+
+只有至少填写了一项自定义身份资料（外号、真名、自定义昵称或备注）的成员会被注入上下文；未编辑的成员不会增加 Prompt 内容。每次收到群消息，插件只在内存中保存有限窗口的发送者、文本和直接 `@` QQ 号；触发 LLM 请求时，会合并最近 N 条消息中的已配置发言成员，以及消息文本提到的已配置成员。可匹配的平台昵称、群名片、外号、真名和自定义昵称会统一去重；备注默认只作为注入资料，不作为名称关键词。Prompt 会把平台昵称、群名片、外号、真名、自定义昵称和备注分开标记，不会注入群主、群成员、角色、头衔等平台身份信息。本群自定义 Prompt 和窗口大小也按平台实例和 QQ 群单独保存，不会影响其他会话。
+
+成员列表上方的搜索栏支持按平台昵称、QQ 号或群名片过滤；输入时会即时缩小列表，按 Enter 会定位到第一个匹配成员，清除后恢复完整列表。成员较多时可以选择每页 10/20/50/100 人，使用上一页、下一页或页码跳转；搜索和分页只影响页面显示，不会改变已保存的成员资料。还可以一键筛选“仅显示已配置”的成员。
+
+当前群的“完全重置”按钮需要二次确认。确认后会清空本群所有成员的外号、真名、自定义昵称、自定义字段值、补充说明和本群自定义 Prompt，同时保留群成员列表、平台昵称、群名片以及全局字段名称；该操作不可撤销。
+
+成员列表上方还可以定义全局自定义身份字段，例如“花名”“游戏名”。字段名在所有群会话共用，但每个成员填写的字段值仍保存在对应群会话中，并按 `字段名：内容` 的形式写入 Prompt。删除全局字段后，该字段不会继续参与匹配或 Prompt 注入。
+
+插件运行期间维护动态消息窗口；窗口数量由 AstrBot 插件配置统一控制。如果 AstrBot 的平台消息历史功能已启用，插件重启后会尝试从平台历史回填最近用户消息及其文本。没有平台历史时，重启后的窗口从新收到的消息重新开始累计。
+
+## 查看 LLM 注入日志
+
+每次进入 LLM 请求钩子时，插件都会通过 AstrBot 的插件日志输出一条注入报告，日志标识为 `astrbot_plugin_group_member_context.llm_injection`。选择“摘要”时，报告包含会话、窗口条数、窗口内发言者和直接 `@` 的 QQ 号、实际命中的成员、命中依据、Prompt 长度以及最终状态（例如 `injected`、`duplicate`、`skipped`）；选择“全部”时会额外包含本次注入的完整 Prompt。日志不会记录完整消息文本。
+
+资料使用 AstrBot 插件 KV 存储，不写入插件目录。会话键由平台实例 ID、`GroupMessage` 和 QQ 群号组成，因此不同 QQ 群或不同机器人实例不会共享资料。
+
+当前版本只读取 AstrBot 已连接的 OneBot V11 群列表和群成员列表；QQ 官方频道适配器不提供同一套群成员 Action，因此暂未纳入页面选择器。

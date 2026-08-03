@@ -1,0 +1,15 @@
+{
+  "message_window_size": {
+    "type": "int",
+    "description": "动态成员消息窗口数量",
+    "default": 20,
+    "hint": "LLM 请求时检索最近多少条群消息，范围为 1～200。"
+  },
+  "log_detail": {
+    "type": "string",
+    "description": "LLM 注入日志详细程度",
+    "options": ["摘要", "全部"],
+    "default": "摘要",
+    "hint": "摘要记录注入统计；全部会额外记录本次注入的完整 Prompt。"
+  }
+}

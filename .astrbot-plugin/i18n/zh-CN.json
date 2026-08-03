@@ -1,0 +1,11 @@
+{
+  "metadata": {
+    "display_name": "群成员身份上下文"
+  },
+  "pages": {
+    "member-context": {
+      "title": "群成员身份上下文",
+      "description": "管理 QQ 群成员身份映射，并预览注入模型的上下文。"
+    }
+  }
+}
