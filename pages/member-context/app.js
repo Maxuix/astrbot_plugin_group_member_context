@@ -24,13 +24,14 @@ const elements = {
   editor: document.getElementById("editor"),
   selectedGroupName: document.getElementById("selected-group-name"),
   selectedGroupMeta: document.getElementById("selected-group-meta"),
-  loadMembers: document.getElementById("load-members"),
+  refreshMembers: document.getElementById("refresh-members"),
   resetProfile: document.getElementById("reset-profile"),
   resetConfirmation: document.getElementById("reset-confirmation"),
   resetConfirmGroup: document.getElementById("reset-confirm-group"),
   cancelReset: document.getElementById("cancel-reset"),
   confirmReset: document.getElementById("confirm-reset"),
   memberCount: document.getElementById("member-count"),
+  memberRefreshTime: document.getElementById("member-refresh-time"),
   memberSearch: document.getElementById("member-search"),
   clearMemberSearch: document.getElementById("clear-member-search"),
   configuredFilter: document.getElementById("configured-filter"),
@@ -57,6 +58,18 @@ const elements = {
 function showNotice(message, kind = "info") {
   elements.notice.textContent = message || "";
   elements.notice.className = message ? `notice ${kind}` : "notice";
+}
+
+function formatRefreshTime(value = new Date()) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(value);
 }
 
 function selectedPayload() {
@@ -546,7 +559,7 @@ function renderMembers({ scrollToFirst = false } = {}) {
     if (state.showConfiguredOnly) filters.push(`已配置筛选 ${visibleMembers.length}`);
     elements.memberCount.textContent = filters.length
       ? `${filters.join(" · ")} / 共 ${state.members.length} 位群成员`
-      : `已导入 ${state.members.length} 位群成员`;
+      : `已刷新 ${state.members.length} 位群成员`;
   }
 
   if (!visibleMembers.length) {
@@ -577,11 +590,11 @@ function renderMembers({ scrollToFirst = false } = {}) {
   }
 }
 
-async function loadMembers() {
+async function refreshMembers() {
   if (!state.selectedGroup) return;
   state.loadingMembers = true;
-  elements.loadMembers.disabled = true;
-  showNotice("正在从 OneBot 导入群成员…", "info");
+  elements.refreshMembers.disabled = true;
+  showNotice("正在从 OneBot 刷新群成员信息…", "info");
   try {
     const result = await bridge.apiGet("members", {
       platform_id: state.selectedGroup.platform_id,
@@ -602,12 +615,16 @@ async function loadMembers() {
     if (result.group_name) state.selectedGroup.group_name = result.group_name;
     elements.selectedGroupName.textContent = state.selectedGroup.group_name || `群 ${state.selectedGroup.group_id}`;
     renderMembers();
-    showNotice(`已导入 ${state.members.length} 位成员，可以开始编辑。`, "success");
+    elements.memberRefreshTime.textContent = `最近读取：${formatRefreshTime()}`;
+    showNotice(
+      `已刷新 ${state.members.length} 位群成员；平台昵称、群名片等资料已更新，已配置身份字段会按 QQ 号匹配保留。请保存本群设定以写入最新成员信息。`,
+      "success",
+    );
   } catch (error) {
-    showNotice(error.message || "导入群成员失败。", "error");
+    showNotice(error.message || "刷新群成员信息失败。", "error");
   } finally {
     state.loadingMembers = false;
-    elements.loadMembers.disabled = false;
+    elements.refreshMembers.disabled = false;
   }
 }
 
@@ -736,6 +753,7 @@ function selectGroup() {
   state.showConfiguredOnly = false;
   elements.customPrompt.value = "";
   elements.memberSearch.value = "";
+  elements.memberRefreshTime.textContent = "最近读取：尚未读取";
   updateConfiguredFilter();
   elements.promptOutput.textContent = "保存或预览后显示。";
   if (!selected) {
@@ -746,14 +764,14 @@ function selectGroup() {
   elements.selectedGroupName.textContent = selected.group_name || `群 ${selected.group_id}`;
   elements.selectedGroupMeta.textContent = `${selected.platform_id} · 群号 ${selected.group_id}`;
   renderMembers();
-  loadMembers();
+  refreshMembers();
 }
 
 async function init() {
   await bridge.ready();
   elements.refreshGroups.addEventListener("click", loadGroups);
   elements.groupSelect.addEventListener("change", selectGroup);
-  elements.loadMembers.addEventListener("click", loadMembers);
+  elements.refreshMembers.addEventListener("click", refreshMembers);
   elements.resetProfile.addEventListener("click", openResetConfirmation);
   elements.cancelReset.addEventListener("click", () => closeResetConfirmation());
   elements.confirmReset.addEventListener("click", performResetProfile);

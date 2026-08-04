@@ -566,6 +566,26 @@ textarea.text-input {
   min-width: 0;
 }
 
+.member-refresh-hint {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 0 0 13px;
+  padding: 8px 10px;
+  border-left: 4px solid var(--yellow);
+  background: var(--panel-alt);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.member-refresh-time {
+  flex: 0 0 auto;
+  color: var(--ink);
+  font: 700 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
 .toolbar-tip {
   justify-self: end;
   font-size: 10px;
@@ -1052,6 +1072,7 @@ pre {
   .page-header,
   .member-toolbar,
   .member-toolbar-actions,
+  .member-refresh-hint,
   .member-directory-controls,
   .custom-field-add,
   .app-footer {

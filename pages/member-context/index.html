@@ -84,7 +84,7 @@
             <option value="">请选择一个群</option>
           </select>
           <p id="group-help" class="help-text">
-            列表来自已连接的 OneBot V11/aiocqhttp 平台；离线群会保留在列表中，恢复连接后可重新导入。
+            列表来自已连接的 OneBot V11/aiocqhttp 平台；离线群会保留在列表中，恢复连接后可重新刷新成员信息。
           </p>
           <div id="group-errors" class="inline-errors"></div>
         </aside>
@@ -93,7 +93,7 @@
           <div id="empty-state" class="empty-state">
             <div class="empty-icon">OPEN<br />01</div>
             <h2>先选择一个 QQ 群</h2>
-            <p>选择群后点击“导入成员”，只为需要说明身份的成员填写资料；未编辑成员不会进入上下文。</p>
+            <p>选择群后会自动刷新成员信息，也可以手动刷新；只为需要说明身份的成员填写资料，未编辑成员不会进入上下文。</p>
           </div>
 
           <div id="editor" class="hidden">
@@ -112,8 +112,13 @@
                   <button id="reset-profile" class="button button-small button-danger" type="button">
                     完全重置
                   </button>
-                  <button id="load-members" class="button button-secondary" type="button">
-                    导入成员
+                  <button
+                    id="refresh-members"
+                    class="button button-secondary"
+                    type="button"
+                    title="从 OneBot 重新读取当前群成员资料"
+                  >
+                    刷新成员信息
                   </button>
                 </div>
               </div>
@@ -122,7 +127,7 @@
             <div class="member-toolbar">
               <div class="toolbar-title">
                 <span class="toolbar-index">03</span>
-                <span id="member-count" class="muted">尚未导入成员</span>
+                <span id="member-count" class="muted">尚未刷新成员信息</span>
               </div>
               <div class="member-toolbar-actions">
                 <span class="toolbar-tip">字段支持多值 · Enter 添加</span>
@@ -140,6 +145,10 @@
                   </button>
                 </div>
               </div>
+            </div>
+            <div id="member-refresh-hint" class="member-refresh-hint" role="status" aria-live="polite">
+              <span>平台资料来自机器人当前返回结果，可能存在同步延迟；未变化时请稍后再次刷新。刷新前请先保存未提交的身份编辑。</span>
+              <strong id="member-refresh-time" class="member-refresh-time">最近读取：尚未读取</strong>
             </div>
             <section class="custom-fields-panel">
               <div class="preview-heading">

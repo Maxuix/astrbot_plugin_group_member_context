@@ -9,20 +9,23 @@ from astrbot.api.platform import MessageType
 
 
 class FakeClient:
+    def __init__(self):
+        self.member_payload = [
+            {
+                "user_id": 2001,
+                "nickname": "A",
+                "card": "A的名片",
+                "role": "owner",
+                "title": "群头衔",
+            }
+        ]
+
     async def call_action(self, action, **params):
         if action == "get_group_list":
             return [{"group_id": 1001, "group_name": "研发群"}]
         if action == "get_group_member_list":
             assert params == {"group_id": 1001}
-            return [
-                {
-                    "user_id": 2001,
-                    "nickname": "A",
-                    "card": "A的名片",
-                    "role": "owner",
-                    "title": "群头衔",
-                }
-            ]
+            return self.member_payload
         raise AssertionError(f"unexpected action: {action}")
 
 
@@ -161,6 +164,30 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
     assert saved["saved"] is True
     assert saved["custom_identity_fields"] == ["游戏名"]
     plugin.put_kv_data.assert_awaited_once()
+
+    plugin._find_aiocqhttp_platform("bot-a").get_client().member_payload = [
+        {
+            "user_id": 2001,
+            "nickname": "A的新昵称",
+            "card": "A的新群名片",
+            "role": "member",
+            "title": "",
+        }
+    ]
+    monkeypatch.setattr(
+        plugin_module,
+        "request",
+        FakeRequest(query={"platform_id": "bot-a", "group_id": "1001"}),
+    )
+    refreshed = response_json(await plugin.list_members())
+    refreshed_member = refreshed["members"][0]
+    assert refreshed_member["nickname"] == "A的新昵称"
+    assert refreshed_member["card"] == "A的新群名片"
+    assert refreshed_member["aliases"] == ["Tony"]
+    assert refreshed_member["real_names"] == ["Tony Wang"]
+    assert refreshed_member["nicknames"] == ["老王"]
+    assert refreshed_member["custom_fields"] == {"游戏名": ["TonyGame"]}
+    assert refreshed_member["note"] == "项目负责人"
 
     matching_request = SimpleNamespace(extra_user_content_parts=[])
     await plugin.inject_member_context(FakeEvent("1001"), matching_request)

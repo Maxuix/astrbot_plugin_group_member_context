@@ -78,7 +78,7 @@ class Main(Star):
             f"{prefix}/members",
             self.list_members,
             ["GET"],
-            "Import members from a QQ group",
+            "Refresh the latest members from a QQ group",
         )
         context.register_web_api(
             f"{prefix}/profiles",
