@@ -5,6 +5,10 @@
   --panel: #f7f7f1;
   --panel-alt: #e7e8e2;
   --ink: #141515;
+  --surface-inverse: #141515;
+  --text-on-inverse: #f3f4ec;
+  --text-on-accent: #141515;
+  --text-on-danger: #fff;
   --muted: #666963;
   --line: #292b29;
   --line-soft: #b8bbb3;
@@ -23,6 +27,7 @@
   --panel: #20231f;
   --panel-alt: #2a2d28;
   --ink: #f0f1e8;
+  --text-on-danger: #141515;
   --muted: #afb3a8;
   --line: #d5d8cc;
   --line-soft: #666c61;
@@ -83,8 +88,8 @@ textarea:focus-visible {
   min-height: 88px;
   padding: 17px 32px;
   border-bottom: 4px solid var(--yellow);
-  background: var(--ink);
-  color: #f3f4ec;
+  background: var(--surface-inverse);
+  color: var(--text-on-inverse);
 }
 
 .brand-lockup,
@@ -109,7 +114,7 @@ textarea:focus-visible {
   place-items: center;
   align-content: center;
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--text-on-accent);
   font: 800 11px/1.05 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.05em;
   text-align: center;
@@ -152,7 +157,7 @@ textarea:focus-visible {
 }
 
 .masthead-status strong {
-  color: #f3f4ec;
+  color: var(--text-on-inverse);
 }
 
 .status-dot {
@@ -342,7 +347,7 @@ h3 {
   display: grid;
   place-items: center;
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--text-on-accent);
   font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -462,15 +467,15 @@ textarea.text-input {
 }
 
 .button-primary {
-  border-color: var(--ink);
+  border-color: var(--text-on-accent);
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--text-on-accent);
   box-shadow: 3px 3px 0 var(--line);
 }
 
 .button-primary:hover {
   background: var(--yellow-deep);
-  color: var(--ink);
+  color: var(--text-on-accent);
 }
 
 .button-secondary {
@@ -508,9 +513,9 @@ textarea.text-input {
   height: 60px;
   margin-bottom: 18px;
   padding: 9px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--text-on-accent);
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--text-on-accent);
   font: 800 11px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.08em;
   text-align: left;
@@ -589,18 +594,18 @@ textarea.text-input {
 
 .button-danger:hover {
   background: var(--danger);
-  color: #fff;
+  color: var(--text-on-danger);
 }
 
 .button-filter.active {
-  border-color: var(--ink);
+  border-color: var(--text-on-accent);
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--text-on-accent);
 }
 
 .button-filter.active:hover {
   background: var(--yellow-deep);
-  color: var(--ink);
+  color: var(--text-on-accent);
 }
 
 .members-empty {
@@ -656,7 +661,7 @@ textarea.text-input {
 
 .custom-field-chip {
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--text-on-accent);
 }
 
 .window-config-hint {
@@ -739,14 +744,14 @@ textarea.text-input {
 }
 
 .page-button.active {
-  border-color: var(--ink);
+  border-color: var(--text-on-accent);
   background: var(--yellow);
-  color: var(--ink);
+  color: var(--text-on-accent);
 }
 
 .page-button.active:hover {
   background: var(--yellow-deep);
-  color: var(--ink);
+  color: var(--text-on-accent);
 }
 
 .page-ellipsis {
@@ -943,8 +948,8 @@ pre {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 0;
-  background: var(--ink);
-  color: #f0f1e8;
+  background: var(--surface-inverse);
+  color: var(--text-on-inverse);
   font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap;
   word-break: break-word;
