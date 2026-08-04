@@ -20,6 +20,9 @@ const elements = {
   groupSelect: document.getElementById("group-select"),
   groupCount: document.getElementById("group-count"),
   groupErrors: document.getElementById("group-errors"),
+  configMessageWindowSize: document.getElementById("config-message-window-size"),
+  configLogDetail: document.getElementById("config-log-detail"),
+  savePluginConfig: document.getElementById("save-plugin-config"),
   emptyState: document.getElementById("empty-state"),
   editor: document.getElementById("editor"),
   selectedGroupName: document.getElementById("selected-group-name"),
@@ -141,6 +144,46 @@ async function loadGroups() {
     showNotice(error.message || "读取群列表失败。", "error");
   } finally {
     elements.refreshGroups.disabled = false;
+  }
+}
+
+function applyPluginConfig(config) {
+  const messageWindowSize = Number(config?.message_window_size);
+  elements.configMessageWindowSize.value = Number.isInteger(messageWindowSize)
+    ? String(messageWindowSize)
+    : "20";
+  elements.configLogDetail.value = config?.log_detail === "全部" ? "全部" : "摘要";
+}
+
+async function loadPluginConfig() {
+  try {
+    const result = await bridge.apiGet("config");
+    applyPluginConfig(result);
+  } catch (error) {
+    showNotice(error.message || "读取插件配置失败。", "error");
+  }
+}
+
+async function savePluginConfig() {
+  const messageWindowSize = Number(elements.configMessageWindowSize.value);
+  if (!Number.isInteger(messageWindowSize) || messageWindowSize < 1 || messageWindowSize > 200) {
+    showNotice("动态成员消息窗口数量必须是 1～200 的整数。", "warning");
+    elements.configMessageWindowSize.focus();
+    return;
+  }
+
+  elements.savePluginConfig.disabled = true;
+  try {
+    const result = await bridge.apiPost("config", {
+      message_window_size: messageWindowSize,
+      log_detail: elements.configLogDetail.value,
+    });
+    applyPluginConfig(result);
+    showNotice("插件配置已保存，新的 LLM 请求会使用最新设置。", "success");
+  } catch (error) {
+    showNotice(error.message || "保存插件配置失败。", "error");
+  } finally {
+    elements.savePluginConfig.disabled = false;
   }
 }
 
@@ -771,6 +814,7 @@ async function init() {
   await bridge.ready();
   elements.refreshGroups.addEventListener("click", loadGroups);
   elements.groupSelect.addEventListener("change", selectGroup);
+  elements.savePluginConfig.addEventListener("click", savePluginConfig);
   elements.refreshMembers.addEventListener("click", refreshMembers);
   elements.resetProfile.addEventListener("click", openResetConfirmation);
   elements.cancelReset.addEventListener("click", () => closeResetConfirmation());
@@ -853,7 +897,7 @@ async function init() {
     renderMembers();
   });
   updateConfiguredFilter();
-  await loadGroups();
+  await Promise.all([loadPluginConfig(), loadGroups()]);
 }
 
 init().catch((error) => showNotice(error.message || "页面初始化失败。", "error"));

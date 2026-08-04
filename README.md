@@ -87,7 +87,7 @@ AstrBot/data/plugins/astrbot_plugin_group_member_context/
 
 ### 6. 配置动态窗口和日志
 
-进入 AstrBot 的插件配置菜单，设置：
+可以在插件页面左侧的“插件配置”面板，或进入 AstrBot 的插件配置菜单进行设置；两处共用同一份配置：
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |

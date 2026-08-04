@@ -58,6 +58,18 @@ class FakeRequest:
         return self.body if self.body is not None else default
 
 
+class FakePluginConfig(dict):
+    def __init__(self, **values):
+        super().__init__(values)
+        self.saved_values = []
+
+    async def save_config_async(self, replace_config=None):
+        if replace_config:
+            self.update(replace_config)
+            self.saved_values.append(dict(replace_config))
+        return True
+
+
 class FakeEvent:
     def __init__(
         self,
@@ -115,6 +127,32 @@ def latest_llm_report(logger):
     assert call.args[0] == "%s %s"
     assert call.args[1] == plugin_module.LLM_INJECTION_LOG_MARKER
     return json.loads(call.args[2])
+
+
+@pytest.mark.asyncio
+async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
+    config = FakePluginConfig(message_window_size=18, log_detail="摘要")
+    plugin = plugin_module.Main(FakeContext(), config=config)
+
+    current = response_json(await plugin.get_plugin_config())
+    assert current == {"message_window_size": 18, "log_detail": "摘要"}
+
+    monkeypatch.setattr(
+        plugin_module,
+        "request",
+        FakeRequest(body={"message_window_size": 48, "log_detail": "全部"}),
+    )
+    saved = response_json(await plugin.save_plugin_config())
+
+    assert saved == {
+        "saved": True,
+        "message_window_size": 48,
+        "log_detail": "全部",
+    }
+    assert config == {"message_window_size": 48, "log_detail": "全部"}
+    assert config.saved_values == [{"message_window_size": 48, "log_detail": "全部"}]
+    assert plugin._configured_message_window_size() == 48
+    assert plugin._configured_log_detail() == plugin_module.LOG_DETAIL_FULL
 
 
 @pytest.mark.asyncio

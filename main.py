@@ -60,6 +60,7 @@ class Main(Star):
         self.config = config if config is not None else {}
         if not getattr(self, "plugin_id", None):
             self.plugin_id = f"local/{PLUGIN_NAME}"
+        self._config_lock = asyncio.Lock()
         self._store_lock = asyncio.Lock()
         self._store_loaded = False
         self._store: dict[str, Any] = {"version": STORE_VERSION, "sessions": {}}
@@ -79,6 +80,18 @@ class Main(Star):
             self.list_members,
             ["GET"],
             "Refresh the latest members from a QQ group",
+        )
+        context.register_web_api(
+            f"{prefix}/config",
+            self.get_plugin_config,
+            ["GET"],
+            "Read the shared plugin configuration",
+        )
+        context.register_web_api(
+            f"{prefix}/config",
+            self.save_plugin_config,
+            ["POST"],
+            "Save the shared plugin configuration",
         )
         context.register_web_api(
             f"{prefix}/profiles",
@@ -205,6 +218,38 @@ class Main(Star):
             else "摘要"
         )
         return normalize_log_detail(configured_value)
+
+    def _plugin_config_snapshot(self) -> dict[str, Any]:
+        """Return config values in the same labels shown by AstrBot's schema."""
+
+        log_detail = (
+            "全部"
+            if self._configured_log_detail() == LOG_DETAIL_FULL
+            else "摘要"
+        )
+        return {
+            "message_window_size": self._configured_message_window_size(),
+            "log_detail": log_detail,
+        }
+
+    async def _persist_plugin_config(self, values: Mapping[str, Any]) -> None:
+        """Persist plugin config without blocking the event loop when supported."""
+
+        save_async = getattr(self.config, "save_config_async", None)
+        if callable(save_async):
+            result = save_async(dict(values))
+            if inspect.isawaitable(result):
+                await result
+            return
+
+        save_sync = getattr(self.config, "save_config", None)
+        if callable(save_sync):
+            result = save_sync(dict(values))
+            if inspect.isawaitable(result):
+                await result
+            return
+
+        raise RuntimeError("当前 AstrBot 配置对象不支持保存插件配置。")
 
     def _log_llm_injection_report(
         self,
@@ -607,6 +652,42 @@ class Main(Star):
             )
         )
         return json_response({"groups": groups, "errors": errors})
+
+    async def get_plugin_config(self):
+        """Return the plugin settings shared with AstrBot's config page."""
+
+        return json_response(self._plugin_config_snapshot())
+
+    async def save_plugin_config(self):
+        """Validate and persist settings shared with AstrBot's config page."""
+
+        payload = await request.json(default={})
+        if not isinstance(payload, Mapping):
+            return error_response("请求数据格式错误。", status_code=400)
+
+        current = self._plugin_config_snapshot()
+        values = {
+            "message_window_size": normalize_message_window_size(
+                payload.get("message_window_size", current["message_window_size"])
+            ),
+            "log_detail": (
+                "全部"
+                if normalize_log_detail(
+                    payload.get("log_detail", current["log_detail"])
+                )
+                == LOG_DETAIL_FULL
+                else "摘要"
+            ),
+        }
+
+        try:
+            async with self._config_lock:
+                await self._persist_plugin_config(values)
+        except Exception as exc:
+            self.logger.exception("保存插件配置失败。")
+            return error_response(f"保存插件配置失败：{exc}", status_code=500)
+
+        return json_response({"saved": True, **values})
 
     async def list_members(self):
         """Fetch and merge the current member list for one selected QQ group."""

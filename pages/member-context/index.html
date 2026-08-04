@@ -68,26 +68,81 @@
       </div>
 
       <section class="workspace-grid">
-        <aside class="panel group-panel">
-          <div class="panel-heading">
-            <div class="section-heading">
-              <span class="section-index">01</span>
-              <div>
-                <p class="section-kicker">SESSION SELECTOR</p>
-                <h2>选择群会话</h2>
-                <p id="group-count" class="muted">正在读取…</p>
+        <div class="workspace-sidebar">
+          <aside class="panel group-panel">
+            <div class="panel-heading">
+              <div class="section-heading">
+                <span class="section-index">01</span>
+                <div>
+                  <p class="section-kicker">SESSION SELECTOR</p>
+                  <h2>选择群会话</h2>
+                  <p id="group-count" class="muted">正在读取…</p>
+                </div>
               </div>
             </div>
-          </div>
-          <label class="field-label field-label-large" for="group-select">QQ 群 / SESSION</label>
-          <select id="group-select" class="select-input" aria-describedby="group-help">
-            <option value="">请选择一个群</option>
-          </select>
-          <p id="group-help" class="help-text">
-            列表来自已连接的 OneBot V11/aiocqhttp 平台；离线群会保留在列表中，恢复连接后可重新刷新成员信息。
-          </p>
-          <div id="group-errors" class="inline-errors"></div>
-        </aside>
+            <label class="field-label field-label-large" for="group-select">QQ 群 / SESSION</label>
+            <select id="group-select" class="select-input" aria-describedby="group-help">
+              <option value="">请选择一个群</option>
+            </select>
+            <p id="group-help" class="help-text">
+              列表来自已连接的 OneBot V11/aiocqhttp 平台；离线群会保留在列表中，恢复连接后可重新刷新成员信息。
+            </p>
+            <div id="group-errors" class="inline-errors"></div>
+          </aside>
+
+          <section class="panel plugin-config-panel" aria-labelledby="plugin-config-title">
+            <div class="panel-heading">
+              <div class="section-heading">
+                <span class="section-index config-section-index">CFG</span>
+                <div>
+                  <p class="section-kicker">PLUGIN CONFIGURATION</p>
+                  <h2 id="plugin-config-title">插件配置</h2>
+                  <p class="muted">与 AstrBot 插件配置共用</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-fields">
+              <div class="config-field">
+                <label class="field-label" for="config-message-window-size">动态成员消息窗口数量</label>
+                <input
+                  id="config-message-window-size"
+                  class="text-input"
+                  type="number"
+                  min="1"
+                  max="200"
+                  step="1"
+                  value="20"
+                  inputmode="numeric"
+                  aria-describedby="config-message-window-help"
+                />
+                <p id="config-message-window-help" class="help-text">
+                  LLM 请求时检索最近多少条群消息，范围为 1～200。
+                </p>
+              </div>
+
+              <div class="config-field">
+                <label class="field-label" for="config-log-detail">LLM 注入日志详细程度</label>
+                <select id="config-log-detail" class="select-input" aria-describedby="config-log-detail-help">
+                  <option value="摘要">摘要</option>
+                  <option value="全部">全部</option>
+                </select>
+                <p id="config-log-detail-help" class="help-text">
+                  “全部”会额外记录本次注入的完整 Prompt。
+                </p>
+              </div>
+            </div>
+
+            <p class="help-text config-shared-help">
+              此处与 AstrBot 插件配置页面共用同一份配置；任一处保存后，插件运行时都会使用最新值。
+            </p>
+            <div class="config-save-bar">
+              <button id="save-plugin-config" class="button button-primary" type="button">
+                保存插件配置
+              </button>
+            </div>
+          </section>
+        </div>
 
         <section class="panel editor-panel" aria-live="polite">
           <div id="empty-state" class="empty-state">
@@ -145,10 +200,10 @@
                   </button>
                 </div>
               </div>
-            </div>
-            <div id="member-refresh-hint" class="member-refresh-hint" role="status" aria-live="polite">
-              <span>平台资料来自机器人当前返回结果，可能存在同步延迟；未变化时请稍后再次刷新。刷新前请先保存未提交的身份编辑。</span>
-              <strong id="member-refresh-time" class="member-refresh-time">最近读取：尚未读取</strong>
+              <div id="member-refresh-hint" class="member-refresh-hint" role="status" aria-live="polite">
+                <span>平台资料来自机器人当前返回结果，可能存在同步延迟；未变化时请稍后再次刷新。刷新前请先保存未提交的身份编辑。</span>
+                <strong id="member-refresh-time" class="member-refresh-time">最近读取：尚未读取</strong>
+              </div>
             </div>
             <section class="custom-fields-panel">
               <div class="preview-heading">
@@ -177,9 +232,6 @@
                 </button>
               </div>
             </section>
-            <p class="help-text window-config-hint">
-              最近消息窗口数量由 AstrBot 插件配置中的“动态成员消息窗口数量”统一控制；范围为 1～200。
-            </p>
             <div class="member-directory-controls">
               <div class="directory-filter">
                 <button
