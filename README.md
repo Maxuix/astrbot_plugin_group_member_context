@@ -260,7 +260,3 @@ astrbot_plugin_group_member_context.llm_injection
 ### 修改配置后没有立即生效
 
 请确认页面已经保存，并检查 AstrBot 插件配置菜单中的选项是否已保存；必要时重载插件后再触发一次新的 LLM 请求。
-
-## 开源许可
-
-本项目采用 [GNU Affero General Public License v3.0](./LICENSE) 发布。

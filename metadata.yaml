@@ -1,6 +1,6 @@
 name: astrbot_plugin_group_member_context
 display_name: 群成员身份上下文
-desc: 按群会话隔离配置群成员外号、真名、昵称等身份映射，并在 LLM 请求时按最近消息窗口动态注入当前群的相关成员信息至上下文。
+desc: 让AI认出群友：自动把最近聊天中出现/提到的成员，与其真名、外号、昵称对应起来，动态注入到大模型上下文中。
 short_desc: 让大模型认出群友：自动把最近聊天中出现的成员，与其真名、外号、昵称对应起来。
 version: 0.5.1
 author: Maxuix
