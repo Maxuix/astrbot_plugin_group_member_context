@@ -193,7 +193,7 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
                         "note": "项目负责人",
                     },
                 ],
-                "custom_prompt": "回答技术问题时先给结论。",
+                "usage_rules": "回答技术问题时先给结论。",
                 "message_window_size": 20,
             }
         ),
@@ -201,6 +201,8 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
     saved = response_json(await plugin.save_profile())
     assert saved["saved"] is True
     assert saved["custom_identity_fields"] == ["游戏名"]
+    assert saved["usage_rules"] == "回答技术问题时先给结论。"
+    assert saved["usage_rules_customized"] is True
     plugin.put_kv_data.assert_awaited_once()
 
     plugin._find_aiocqhttp_platform("bot-a").get_client().member_payload = [
@@ -226,6 +228,8 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
     assert refreshed_member["nicknames"] == ["老王"]
     assert refreshed_member["custom_fields"] == {"游戏名": ["TonyGame"]}
     assert refreshed_member["note"] == "项目负责人"
+    assert refreshed["usage_rules"] == "回答技术问题时先给结论。"
+    assert refreshed["default_usage_rules"] == plugin_module.DEFAULT_USAGE_RULES
 
     matching_request = SimpleNamespace(extra_user_content_parts=[])
     await plugin.inject_member_context(FakeEvent("1001"), matching_request)
@@ -234,9 +238,11 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
     assert "Tony" in injected.text
     assert "外号：Tony" in injected.text
     assert "真名：Tony Wang" in injected.text
-    assert "自定义昵称：老王" in injected.text
+    assert "昵称：老王" in injected.text
     assert "游戏名：TonyGame" in injected.text
-    assert "回答技术问题时先给结论。" in injected.text
+    assert "【使用规则】\n回答技术问题时先给结论。" in injected.text
+    assert "【本群自定义 Prompt】" not in injected.text
+    assert "管理员" not in injected.text
     assert "owner" not in injected.text
     assert "群头衔" not in injected.text
     assert injected.model_dump_for_context()["_no_save"] is True
@@ -277,7 +283,7 @@ async def test_reset_profile_clears_current_group_identity_data(monkeypatch):
                     },
                     {"user_id": "2002", "nickname": "未配置成员"},
                 ],
-                "custom_prompt": "只回答技术问题。",
+                "usage_rules": "只回答技术问题。",
             }
         ),
     )
@@ -293,7 +299,8 @@ async def test_reset_profile_clears_current_group_identity_data(monkeypatch):
     assert reset["reset"] is True
     assert reset["member_count"] == 2
     assert reset["configured_member_count"] == 0
-    assert reset["custom_prompt_enabled"] is False
+    assert reset["usage_rules_customized"] is False
+    assert reset["usage_rules"] == plugin_module.DEFAULT_USAGE_RULES
     assert reset["custom_identity_fields"] == ["游戏名"]
     assert reset["message_window_size"] == 30
     assert reset["members"][0]["nickname"] == "A"
@@ -304,7 +311,10 @@ async def test_reset_profile_clears_current_group_identity_data(monkeypatch):
     assert reset["members"][0]["nicknames"] == []
     assert reset["members"][0]["custom_fields"] == {}
     assert reset["members"][0]["note"] == ""
-    assert plugin._stored_sessions()["bot-a:GroupMessage:1001"]["custom_prompt"] == ""
+    assert (
+        plugin._stored_sessions()["bot-a:GroupMessage:1001"]["usage_rules"]
+        == plugin_module.DEFAULT_USAGE_RULES
+    )
     assert plugin.put_kv_data.await_count == 2
 
 
@@ -441,7 +451,7 @@ async def test_dynamic_window_injects_members_mentioned_by_name(monkeypatch):
     prompt = request.extra_user_content_parts[0].text
     assert "QQ号：2001" in prompt
     assert "真名：Tony Wang" in prompt
-    assert "自定义昵称：老王" in prompt
+    assert "昵称：老王" in prompt
     assert "QQ号：2002" in prompt
     assert "外号：小红" in prompt
     assert "QQ号：2003" not in prompt

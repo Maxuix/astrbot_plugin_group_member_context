@@ -10,7 +10,7 @@
     <div class="app-frame">
       <header class="masthead">
         <div class="brand-lockup">
-          <div class="brand-mark" aria-hidden="true">AB<br />CTX</div>
+          <img class="brand-logo" src="../../logo.png" alt="群成员身份上下文 Logo" />
           <div>
             <p class="brand-kicker">ASTRBOT / LOCAL WORKBENCH</p>
             <strong class="brand-title">GROUP MEMBER CONTEXT</strong>
@@ -57,7 +57,7 @@
           <h2 id="reset-confirm-title">确认完全重置</h2>
           <p id="reset-confirm-group" class="reset-confirm-group"></p>
           <p id="reset-confirm-description" class="reset-confirm-description">
-            将清空本群所有成员的外号、真名、自定义昵称、自定义字段值、补充说明和本群 Prompt。
+            将清空本群所有成员的外号、真名、昵称、自定义字段值和补充说明，并将使用规则恢复为默认内容。
             群成员列表、平台昵称、群名片和全局字段名称会保留，此操作不可撤销。
           </p>
           <div class="reset-dialog-actions">
@@ -275,23 +275,27 @@
               </button>
             </nav>
 
-            <section class="custom-prompt-panel">
+            <section class="usage-rules-panel">
               <div class="preview-heading">
                 <div class="subsection-heading">
                   <span class="subsection-index">B</span>
-                  <h3>本群自定义 Prompt</h3>
+                  <h3>使用规则</h3>
                 </div>
                 <span class="muted">仅当前群会话生效</span>
               </div>
-              <label class="field-label" for="custom-prompt">Prompt 内容</label>
+              <div class="usage-rules-label-row">
+                <label class="field-label" for="usage-rules">Prompt 使用规则</label>
+                <button id="reset-usage-rules" class="button button-small button-secondary" type="button">
+                  重置为默认
+                </button>
+              </div>
               <textarea
-                id="custom-prompt"
-                class="text-input custom-prompt-input"
+                id="usage-rules"
+                class="text-input usage-rules-input"
                 rows="6"
-                placeholder="例如：本群讨论技术问题时优先给出可执行步骤；不确定的信息请明确说明。"
               ></textarea>
               <p class="help-text">
-                可填写本群专属的背景、表达偏好或处理规则。内容会和成员身份映射一起注入当前群，不会影响其他群。
+                这里会显示默认使用规则。你可以直接修改或追加内容；点击“重置为默认”可恢复未修改状态，保存后对当前群生效。
               </p>
             </section>
 

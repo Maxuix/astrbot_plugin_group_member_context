@@ -20,6 +20,7 @@ from astrbot.api.web import error_response, json_response, request
 from astrbot.core.agent.message import TextPart
 
 from .member_context import (
+    DEFAULT_USAGE_RULES,
     DEFAULT_MESSAGE_WINDOW_SIZE,
     LOG_DETAIL_FULL,
     MAX_MESSAGE_WINDOW_SIZE,
@@ -31,12 +32,12 @@ from .member_context import (
     has_custom_identity,
     merge_remote_members,
     normalize_custom_identity_fields,
-    normalize_custom_prompt,
     normalize_id,
     normalize_log_detail,
     normalize_member_list,
     normalize_message_window_size,
     normalize_store,
+    normalize_usage_rules,
     select_members_for_window,
 )
 
@@ -538,7 +539,7 @@ class Main(Star):
             "group_id": group_id,
             "group_name": clean_text(payload.get("group_name"), max_length=200),
             "members": members,
-            "custom_prompt": normalize_custom_prompt(payload.get("custom_prompt")),
+            "usage_rules": normalize_usage_rules(payload.get("usage_rules")),
             "message_window_size": normalize_message_window_size(
                 payload.get("message_window_size", DEFAULT_MESSAGE_WINDOW_SIZE)
             ),
@@ -603,7 +604,8 @@ class Main(Star):
                         "group_name": group_name,
                         "available": True,
                         "has_profile": bool(
-                            normalize_custom_prompt(saved_profile.get("custom_prompt"))
+                            normalize_usage_rules(saved_profile.get("usage_rules"))
+                            != DEFAULT_USAGE_RULES
                             or any(
                                 has_custom_identity(member)
                                 for member in saved_profile.get("members", [])
@@ -632,7 +634,8 @@ class Main(Star):
                     "group_name": self._group_label(profile),
                     "available": False,
                     "has_profile": bool(
-                        normalize_custom_prompt(profile.get("custom_prompt"))
+                        normalize_usage_rules(profile.get("usage_rules"))
+                        != DEFAULT_USAGE_RULES
                         or any(
                             has_custom_identity(member)
                             for member in profile.get("members", [])
@@ -744,9 +747,10 @@ class Main(Star):
                 "group_name": group_name,
                 "members": members,
                 "custom_identity_fields": self._custom_identity_fields(),
-                "custom_prompt": normalize_custom_prompt(
-                    profile.get("custom_prompt") if isinstance(profile, Mapping) else ""
+                "usage_rules": normalize_usage_rules(
+                    profile.get("usage_rules") if isinstance(profile, Mapping) else None
                 ),
+                "default_usage_rules": DEFAULT_USAGE_RULES,
                 "message_window_size": self._configured_message_window_size(),
             }
         )
@@ -765,7 +769,7 @@ class Main(Star):
                 group_id=profile["group_id"],
                 group_name=profile["group_name"],
                 members=profile["members"],
-                custom_prompt=profile["custom_prompt"],
+                usage_rules=profile["usage_rules"],
                 custom_identity_fields=custom_identity_fields,
             )
         except ValueError as exc:
@@ -784,7 +788,10 @@ class Main(Star):
                 "configured_member_count": sum(
                     1 for member in profile["members"] if has_custom_identity(member)
                 ),
-                "custom_prompt_enabled": bool(profile["custom_prompt"]),
+                "usage_rules": profile["usage_rules"],
+                "usage_rules_customized": profile["usage_rules"]
+                != DEFAULT_USAGE_RULES,
+                "default_usage_rules": DEFAULT_USAGE_RULES,
                 "custom_identity_fields": custom_identity_fields,
                 "message_window_size": self._configured_message_window_size(),
                 "prompt": prompt,
@@ -792,7 +799,7 @@ class Main(Star):
         )
 
     async def reset_profile(self):
-        """Clear all member identity data and the custom prompt for one group."""
+        """Clear all member identity data and restore usage rules for one group."""
 
         payload = await request.json(default={})
         if not isinstance(payload, Mapping):
@@ -839,7 +846,7 @@ class Main(Star):
                     max_length=200,
                 ),
                 "members": reset_members,
-                "custom_prompt": "",
+                "usage_rules": DEFAULT_USAGE_RULES,
                 "message_window_size": self._configured_message_window_size(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -852,7 +859,9 @@ class Main(Star):
                 "session_key": session_key,
                 "member_count": len(reset_members),
                 "configured_member_count": 0,
-                "custom_prompt_enabled": False,
+                "usage_rules": DEFAULT_USAGE_RULES,
+                "usage_rules_customized": False,
+                "default_usage_rules": DEFAULT_USAGE_RULES,
                 "members": reset_members,
                 "custom_identity_fields": self._custom_identity_fields(),
                 "message_window_size": self._configured_message_window_size(),
@@ -871,7 +880,7 @@ class Main(Star):
                 group_id=profile["group_id"],
                 group_name=profile["group_name"],
                 members=profile["members"],
-                custom_prompt=profile["custom_prompt"],
+                usage_rules=profile["usage_rules"],
                 custom_identity_fields=custom_identity_fields,
             )
         except ValueError as exc:
@@ -880,6 +889,10 @@ class Main(Star):
             {
                 "prompt": prompt,
                 "custom_identity_fields": custom_identity_fields,
+                "usage_rules": profile["usage_rules"],
+                "usage_rules_customized": profile["usage_rules"]
+                != DEFAULT_USAGE_RULES,
+                "default_usage_rules": DEFAULT_USAGE_RULES,
                 "message_window_size": self._configured_message_window_size(),
             }
         )
@@ -907,7 +920,7 @@ class Main(Star):
             "window_direct_mention_ids": [],
             "injected_member_ids": [],
             "match_reasons": {},
-            "custom_prompt": False,
+            "usage_rules_customized": False,
             "prompt_injected": False,
             "prompt_length": 0,
         }
@@ -951,10 +964,12 @@ class Main(Star):
                     for member in profile_members
                     if isinstance(member, Mapping) and has_custom_identity(member)
                 )
-            normalized_custom_prompt = normalize_custom_prompt(
-                profile.get("custom_prompt", "")
+            normalized_usage_rules = normalize_usage_rules(
+                profile.get("usage_rules", DEFAULT_USAGE_RULES)
             )
-            report["custom_prompt"] = bool(normalized_custom_prompt)
+            report["usage_rules_customized"] = (
+                normalized_usage_rules != DEFAULT_USAGE_RULES
+            )
             custom_identity_fields = self._custom_identity_fields()
             window_messages = await self._record_group_message_window(
                 event,
@@ -980,13 +995,13 @@ class Main(Star):
                 group_id=group_id,
                 group_name=profile.get("group_name", ""),
                 members=active_members,
-                custom_prompt=normalized_custom_prompt,
+                usage_rules=normalized_usage_rules,
                 match_reasons=match_reasons,
                 custom_identity_fields=custom_identity_fields,
             )
             report["prompt_length"] = len(prompt)
             if not prompt:
-                report["reason"] = "no_matching_member_or_custom_prompt"
+                report["reason"] = "no_matching_member_or_custom_usage_rules"
                 return
 
             parts = getattr(req, "extra_user_content_parts", None)
@@ -1004,7 +1019,7 @@ class Main(Star):
             parts.append(TextPart(text=prompt).mark_as_temp())
             report["status"] = "injected"
             report["reason"] = (
-                "matched_members" if active_members else "custom_prompt_only"
+                "matched_members" if active_members else "usage_rules_only"
             )
             report["prompt_injected"] = True
         except Exception:

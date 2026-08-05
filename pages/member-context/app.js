@@ -5,7 +5,8 @@ const state = {
   selectedGroup: null,
   members: [],
   customIdentityFields: [],
-  customPrompt: "",
+  usageRules: "",
+  defaultUsageRules: "",
   memberSearch: "",
   memberPage: 1,
   memberPageSize: 20,
@@ -52,7 +53,8 @@ const elements = {
   previousPage: document.getElementById("previous-page"),
   pageNumbers: document.getElementById("page-numbers"),
   nextPage: document.getElementById("next-page"),
-  customPrompt: document.getElementById("custom-prompt"),
+  usageRules: document.getElementById("usage-rules"),
+  resetUsageRules: document.getElementById("reset-usage-rules"),
   previewPrompt: document.getElementById("preview-prompt"),
   saveProfile: document.getElementById("save-profile"),
   promptOutput: document.getElementById("prompt-output"),
@@ -83,7 +85,7 @@ function selectedPayload() {
     group_name: state.selectedGroup.group_name || "",
     members: state.members,
     custom_identity_fields: state.customIdentityFields,
-    custom_prompt: state.customPrompt,
+    usage_rules: state.usageRules,
   };
 }
 
@@ -465,7 +467,7 @@ function renderMember(member, index) {
     },
     {
       field: "nicknames",
-      label: "自定义昵称（可添加多个）",
+      label: "昵称（可添加多个）",
       placeholder: "例如：老王",
       inputPrefix: "nickname",
     },
@@ -652,8 +654,9 @@ async function refreshMembers() {
     state.showConfiguredOnly = false;
     elements.memberSearch.value = "";
     updateConfiguredFilter();
-    state.customPrompt = result.custom_prompt || "";
-    elements.customPrompt.value = state.customPrompt;
+    state.defaultUsageRules = result.default_usage_rules || state.defaultUsageRules;
+    state.usageRules = result.usage_rules || state.defaultUsageRules;
+    elements.usageRules.value = state.usageRules;
     renderCustomIdentityFields();
     if (result.group_name) state.selectedGroup.group_name = result.group_name;
     elements.selectedGroupName.textContent = state.selectedGroup.group_name || `群 ${state.selectedGroup.group_id}`;
@@ -678,7 +681,7 @@ async function previewPrompt() {
   try {
     const result = await bridge.apiPost("preview", payload);
     elements.promptOutput.textContent =
-      result.prompt || "当前没有可注入的成员资料或自定义 Prompt。";
+      result.prompt || "当前没有可注入的成员资料。";
     showNotice("Prompt 预览已更新。", "success");
   } catch (error) {
     showNotice(error.message || "生成 Prompt 失败。", "error");
@@ -694,7 +697,14 @@ async function saveProfile() {
   try {
     const result = await bridge.apiPost("profiles", payload);
     elements.promptOutput.textContent =
-      result.prompt || "当前没有可注入的成员资料或自定义 Prompt。";
+      result.prompt || "当前没有可注入的成员资料。";
+    if (result.default_usage_rules) {
+      state.defaultUsageRules = result.default_usage_rules;
+    }
+    if (result.usage_rules) {
+      state.usageRules = result.usage_rules;
+      elements.usageRules.value = state.usageRules;
+    }
     if (Array.isArray(result.custom_identity_fields)) {
       state.customIdentityFields = result.custom_identity_fields;
       renderCustomIdentityFields();
@@ -703,7 +713,7 @@ async function saveProfile() {
     const selected = state.groups.find((group) => group.session_key === state.selectedGroup.session_key);
     if (selected) {
       selected.has_profile = Boolean(
-        state.customPrompt.trim()
+        state.usageRules.trim() !== state.defaultUsageRules.trim()
         || state.members.some((member) => hasConfiguredIdentity(member)),
       );
       selected.member_count = state.members.length;
@@ -711,7 +721,7 @@ async function saveProfile() {
     renderGroupOptions();
     elements.groupSelect.value = state.selectedGroup.session_key;
     showNotice(
-      `已保存 ${result.member_count} 位成员，已配置 ${result.configured_member_count || 0} 位；实际只注入最近 ${result.message_window_size || "配置的"} 条消息中的发言成员，以及消息中提到的已配置成员。${result.custom_prompt_enabled ? "已设置本群自定义 Prompt。" : "未设置本群自定义 Prompt。"}`,
+      `已保存 ${result.member_count} 位成员，已配置 ${result.configured_member_count || 0} 位；实际只注入最近 ${result.message_window_size || "配置的"} 条消息中的发言成员，以及消息中提到的已配置成员。${result.usage_rules_customized ? "已修改本群使用规则。" : "当前使用默认规则。"}`,
       "success",
     );
   } catch (error) {
@@ -753,11 +763,12 @@ async function performResetProfile() {
       members: state.members,
     });
     state.members = Array.isArray(result.members) ? result.members : [];
-    state.customPrompt = "";
+    state.defaultUsageRules = result.default_usage_rules || state.defaultUsageRules;
+    state.usageRules = result.usage_rules || state.defaultUsageRules;
     state.memberSearch = "";
     state.memberPage = 1;
     state.showConfiguredOnly = false;
-    elements.customPrompt.value = "";
+    elements.usageRules.value = state.usageRules;
     elements.memberSearch.value = "";
     updateConfiguredFilter();
     if (Array.isArray(result.custom_identity_fields)) {
@@ -790,11 +801,11 @@ function selectGroup() {
   const selected = state.groups.find((group) => group.session_key === elements.groupSelect.value);
   state.selectedGroup = selected || null;
   state.members = [];
-  state.customPrompt = "";
+  state.usageRules = "";
   state.memberSearch = "";
   state.memberPage = 1;
   state.showConfiguredOnly = false;
-  elements.customPrompt.value = "";
+  elements.usageRules.value = "";
   elements.memberSearch.value = "";
   elements.memberRefreshTime.textContent = "最近读取：尚未读取";
   updateConfiguredFilter();
@@ -829,8 +840,13 @@ async function init() {
   });
   elements.previewPrompt.addEventListener("click", previewPrompt);
   elements.saveProfile.addEventListener("click", saveProfile);
-  elements.customPrompt.addEventListener("input", () => {
-    state.customPrompt = elements.customPrompt.value;
+  elements.usageRules.addEventListener("input", () => {
+    state.usageRules = elements.usageRules.value;
+  });
+  elements.resetUsageRules.addEventListener("click", () => {
+    state.usageRules = state.defaultUsageRules;
+    elements.usageRules.value = state.usageRules;
+    showNotice("使用规则已恢复为默认内容；请保存本群设定后生效。", "success");
   });
   elements.addCustomIdentityField.addEventListener("click", addCustomIdentityField);
   elements.customIdentityFieldInput.addEventListener("keydown", (event) => {

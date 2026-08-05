@@ -1,4 +1,5 @@
 from astrbot_plugin_group_member_context.member_context import (
+    DEFAULT_USAGE_RULES,
     build_identity_prompt,
     build_session_key,
     clear_member_identity,
@@ -8,6 +9,7 @@ from astrbot_plugin_group_member_context.member_context import (
     normalize_message_window_size,
     normalize_log_detail,
     normalize_store,
+    normalize_usage_rules,
     select_members_for_window,
 )
 
@@ -29,6 +31,11 @@ def test_log_detail_accepts_the_plugin_config_labels():
     assert normalize_log_detail("摘要") == "summary"
     assert normalize_log_detail("全部") == "full"
     assert normalize_log_detail("unexpected") == "summary"
+
+
+def test_usage_rules_default_to_the_built_in_rules():
+    assert normalize_usage_rules(None) == DEFAULT_USAGE_RULES
+    assert "管理员" not in DEFAULT_USAGE_RULES
 
 
 def test_remote_members_keep_saved_aliases_and_notes():
@@ -161,8 +168,10 @@ def test_prompt_contains_group_and_member_identity_data():
     assert "项目负责人" in prompt
     assert "外号：Tony、老板" in prompt
     assert "真名：Tony Wang" in prompt
-    assert "自定义昵称：老王" in prompt
+    assert "昵称：老王" in prompt
     assert "平台昵称：A" in prompt
+    assert "【使用规则】" in prompt
+    assert "管理员" not in prompt
     assert "owner" not in prompt
     assert "群头衔" not in prompt
 
@@ -237,19 +246,20 @@ def test_window_selection_keeps_all_members_when_a_name_is_ambiguous():
     assert reasons["1002"]["mentions"] == ["Tony"]
 
 
-def test_custom_prompt_can_be_injected_without_member_identity_data():
+def test_usage_rules_can_be_customized_without_member_identity_data():
     prompt = build_identity_prompt(
         group_id="123456",
         group_name="研发群",
         members=[{"user_id": "1001", "nickname": "未编辑成员"}],
-        custom_prompt="回答技术问题时先给结论。\n不确定时请明确说明。",
+        usage_rules="回答技术问题时先给结论。\n不确定时请明确说明。",
     )
-    assert "【本群自定义 Prompt】" in prompt
+    assert "【使用规则】" in prompt
     assert "回答技术问题时先给结论。\n不确定时请明确说明。" in prompt
+    assert "【本群自定义 Prompt】" not in prompt
     assert "1001" not in prompt
 
 
-def test_store_keeps_separate_fields_and_custom_prompt():
+def test_store_keeps_separate_fields_and_usage_rules():
     store = normalize_store(
         {
             "version": 1,
@@ -258,7 +268,7 @@ def test_store_keeps_separate_fields_and_custom_prompt():
                 "bot-a:GroupMessage:123": {
                     "platform_id": "bot-a",
                     "group_id": "123",
-                    "custom_prompt": "只回答和项目有关的问题。",
+                    "usage_rules": "只回答和项目有关的问题。",
                     "members": [
                         {
                             "user_id": "1",
@@ -273,7 +283,7 @@ def test_store_keeps_separate_fields_and_custom_prompt():
     )
     profile = store["sessions"]["bot-a:GroupMessage:123"]
     assert store["custom_identity_fields"] == ["游戏名", "花名"]
-    assert profile["custom_prompt"] == "只回答和项目有关的问题。"
+    assert profile["usage_rules"] == "只回答和项目有关的问题。"
     assert profile["members"][0]["real_names"] == ["Tony"]
     assert profile["members"][0]["nicknames"] == ["老王"]
 

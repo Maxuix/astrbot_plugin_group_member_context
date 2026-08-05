@@ -107,17 +107,12 @@ textarea:focus-visible {
   min-width: 0;
 }
 
-.brand-mark {
-  display: grid;
-  width: 48px;
-  height: 44px;
-  place-items: center;
-  align-content: center;
-  background: var(--yellow);
-  color: var(--text-on-accent);
-  font: 800 11px/1.05 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.05em;
-  text-align: center;
+.brand-logo {
+  display: block;
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
 }
 
 .brand-kicker,
@@ -946,14 +941,25 @@ textarea.text-input {
   background: var(--yellow);
 }
 
-.custom-prompt-panel,
+.usage-rules-panel,
 .prompt-preview {
   margin-top: 18px;
   padding-top: 15px;
   border-top: 1px solid var(--line);
 }
 
-.custom-prompt-input {
+.usage-rules-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-rules-label-row .field-label {
+  margin-bottom: 6px;
+}
+
+.usage-rules-input {
   min-height: 104px;
   line-height: 1.55;
 }
