@@ -11,5 +11,11 @@
     "options": ["摘要", "全部"],
     "default": "摘要",
     "hint": "摘要记录注入统计；全部会额外记录本次注入的完整 Prompt。"
+  },
+  "avatar_preview_enabled": {
+    "type": "bool",
+    "description": "开启头像预览",
+    "default": false,
+    "hint": "默认关闭。开启后仅在插件 WebUI 中校验并显示当前页群成员的 QQ 头像，不会写入 Prompt。"
   }
 }

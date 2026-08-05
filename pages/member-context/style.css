@@ -350,6 +350,65 @@ h3 {
   border-top: 1px solid var(--line-soft);
 }
 
+.config-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.config-switch-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.config-switch-track {
+  position: relative;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 23px;
+  border: 1px solid var(--line);
+  background: var(--paper-deep);
+  transition: background 0.15s;
+}
+
+.config-switch-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 15px;
+  height: 15px;
+  background: var(--muted);
+  content: "";
+  transition: transform 0.15s, background 0.15s;
+}
+
+.config-switch-input:checked + .config-switch-track {
+  background: var(--yellow);
+}
+
+.config-switch-input:checked + .config-switch-track::after {
+  background: var(--text-on-accent);
+  transform: translateX(19px);
+}
+
+.config-switch-input:focus-visible + .config-switch-track {
+  outline: 3px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.config-switch-text {
+  font-weight: 700;
+}
+
 .config-shared-help {
   margin-top: 14px;
 }
@@ -841,15 +900,32 @@ textarea.text-input {
 }
 
 .member-avatar {
+  position: relative;
   display: grid;
   flex: 0 0 38px;
   width: 38px;
   height: 38px;
+  overflow: hidden;
   place-items: center;
   border: 1px solid var(--line);
   background: var(--paper-deep);
   color: var(--ink);
   font-weight: 850;
+}
+
+.member-avatar-image {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.member-avatar.avatar-loaded .member-avatar-image {
+  opacity: 1;
 }
 
 .identity-text {
