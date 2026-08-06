@@ -132,6 +132,24 @@
                 </p>
               </div>
 
+              <div class="config-field">
+                <span id="config-avatar-preview-label" class="field-label">群成员头像预览</span>
+                <label class="config-switch" for="config-avatar-preview">
+                  <input
+                    id="config-avatar-preview"
+                    class="config-switch-input"
+                    type="checkbox"
+                    role="switch"
+                    aria-labelledby="config-avatar-preview-label config-avatar-preview-text"
+                    aria-describedby="config-avatar-preview-help"
+                  />
+                  <span class="config-switch-track" aria-hidden="true"></span>
+                  <span id="config-avatar-preview-text" class="config-switch-text">开启头像预览</span>
+                </label>
+                <p id="config-avatar-preview-help" class="help-text">
+                  默认关闭。开启后只校验并显示当前页成员头像；未变化头像继续使用浏览器缓存，且不会写入 Prompt。
+                </p>
+              </div>
             </div>
 
             <p class="help-text config-shared-help">

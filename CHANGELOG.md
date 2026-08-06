@@ -2,12 +2,6 @@
 
 本文件记录 `astrbot_plugin_group_member_context` 的重要变更。
 
-## [0.6.2] - 2026-08-06
-
-### 变更
-
-- `master` 分支移除头像预览、头像版本校验及所有外部 QQ 头像 CDN 请求；完整头像版本功能保留在 `feature/avatar-version-check` 分支。
-
 ## [0.6.1] - 2026-08-06
 
 ### 修复
