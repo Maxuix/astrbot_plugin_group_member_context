@@ -134,7 +134,6 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
     config = FakePluginConfig(
         message_window_size=18,
         log_detail="摘要",
-        avatar_preview_enabled=False,
     )
     plugin = plugin_module.Main(FakeContext(), config=config)
 
@@ -142,7 +141,6 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
     assert current == {
         "message_window_size": 18,
         "log_detail": "摘要",
-        "avatar_preview_enabled": False,
     }
 
     monkeypatch.setattr(
@@ -152,7 +150,6 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
             body={
                 "message_window_size": 48,
                 "log_detail": "全部",
-                "avatar_preview_enabled": True,
             }
         ),
     )
@@ -162,83 +159,19 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
         "saved": True,
         "message_window_size": 48,
         "log_detail": "全部",
-        "avatar_preview_enabled": True,
     }
     assert config == {
         "message_window_size": 48,
         "log_detail": "全部",
-        "avatar_preview_enabled": True,
     }
     assert config.saved_values == [
         {
             "message_window_size": 48,
             "log_detail": "全部",
-            "avatar_preview_enabled": True,
         }
     ]
     assert plugin._configured_message_window_size() == 48
     assert plugin._configured_log_detail() == plugin_module.LOG_DETAIL_FULL
-    assert plugin._configured_avatar_preview_enabled() is True
-
-
-@pytest.mark.asyncio
-async def test_avatar_preview_is_disabled_by_default_and_skips_network_checks():
-    plugin = plugin_module.Main(FakeContext(), config={})
-    plugin._check_avatar_revisions = AsyncMock()
-
-    current = response_json(await plugin.get_plugin_config())
-    result = response_json(await plugin.check_avatar_updates())
-
-    assert current["avatar_preview_enabled"] is False
-    assert result == {"enabled": False, "checked_count": 0, "avatars": []}
-    plugin._check_avatar_revisions.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_avatar_check_validates_deduplicates_and_returns_stable_revisions(
-    monkeypatch,
-):
-    plugin = plugin_module.Main(
-        FakeContext(),
-        config={"avatar_preview_enabled": True},
-    )
-    plugin._check_avatar_revisions = AsyncMock(
-        return_value=[
-            {"user_id": "2001", "available": True, "revision": "revision-a"},
-            {"user_id": "2002", "available": False, "revision": ""},
-        ]
-    )
-    monkeypatch.setattr(
-        plugin_module,
-        "request",
-        FakeRequest(body={"user_ids": [2001, "2001", "invalid", "2002"]}),
-    )
-
-    result = response_json(await plugin.check_avatar_updates())
-
-    assert result == {
-        "enabled": True,
-        "checked_count": 2,
-        "avatars": [
-            {"user_id": "2001", "available": True, "revision": "revision-a"},
-            {"user_id": "2002", "available": False, "revision": ""},
-        ],
-    }
-    plugin._check_avatar_revisions.assert_awaited_once_with(["2001", "2002"])
-
-
-def test_avatar_revision_prefers_standard_cache_validators():
-    etag_revision = plugin_module.Main._avatar_revision_from_headers(
-        {"ETag": '"avatar-v2"', "Last-Modified": "yesterday"}
-    )
-    modified_revision = plugin_module.Main._avatar_revision_from_headers(
-        {"Last-Modified": "yesterday"}
-    )
-
-    assert len(etag_revision) == 16
-    assert len(modified_revision) == 16
-    assert etag_revision != modified_revision
-    assert plugin_module.Main._avatar_revision_from_headers({}) == ""
 
 
 @pytest.mark.asyncio

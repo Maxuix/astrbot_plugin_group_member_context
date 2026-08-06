@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import hashlib
 import inspect
 import json
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
-
-import aiohttp
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
@@ -50,11 +47,6 @@ PROMPT_MARKER = "<group_member_identity_context>"
 LLM_INJECTION_LOG_MARKER = "astrbot_plugin_group_member_context.llm_injection"
 WINDOW_RECORDED_EXTRA = "_group_member_context_window_recorded"
 MAX_WINDOW_MESSAGE_TEXT_LENGTH = 4000
-AVATAR_CDN_URL = "https://q1.qlogo.cn/g"
-AVATAR_SIZE = 100
-MAX_AVATAR_CHECK_COUNT = 100
-AVATAR_CHECK_CONCURRENCY = 8
-AVATAR_REQUEST_TIMEOUT_SECONDS = 5
 
 
 class Main(Star):
@@ -101,12 +93,6 @@ class Main(Star):
             self.save_plugin_config,
             ["POST"],
             "Save the shared plugin configuration",
-        )
-        context.register_web_api(
-            f"{prefix}/avatars/check",
-            self.check_avatar_updates,
-            ["POST"],
-            "Check QQ avatar revisions without downloading image bodies",
         )
         context.register_web_api(
             f"{prefix}/profiles",
@@ -234,31 +220,6 @@ class Main(Star):
         )
         return normalize_log_detail(configured_value)
 
-    @staticmethod
-    def _normalize_config_bool(value: object) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return value == 1
-        if isinstance(value, str):
-            return value.strip().casefold() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-                "开启",
-                "启用",
-            }
-        return False
-
-    def _configured_avatar_preview_enabled(self) -> bool:
-        configured_value = (
-            self.config.get("avatar_preview_enabled", False)
-            if isinstance(self.config, Mapping)
-            else False
-        )
-        return self._normalize_config_bool(configured_value)
-
     def _plugin_config_snapshot(self) -> dict[str, Any]:
         """Return config values in the same labels shown by AstrBot's schema."""
 
@@ -268,7 +229,6 @@ class Main(Star):
         return {
             "message_window_size": self._configured_message_window_size(),
             "log_detail": log_detail,
-            "avatar_preview_enabled": self._configured_avatar_preview_enabled(),
         }
 
     async def _persist_plugin_config(self, values: Mapping[str, Any]) -> None:
@@ -699,117 +659,6 @@ class Main(Star):
 
         return json_response(self._plugin_config_snapshot())
 
-    @staticmethod
-    def _avatar_revision_from_headers(headers: Mapping[str, Any]) -> str:
-        """Build a stable, URL-safe revision from QQ CDN response metadata."""
-
-        source = ""
-        for header_name in ("ETag", "Last-Modified", "X-Bcheck"):
-            value = headers.get(header_name)
-            if value:
-                source = str(value).strip()
-                break
-        if not source:
-            return ""
-        return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
-
-    async def _check_avatar_revisions(
-        self,
-        user_ids: list[str],
-    ) -> list[dict[str, Any]]:
-        """Read current avatar revisions with body-free, concurrency-limited HEADs."""
-
-        timeout = aiohttp.ClientTimeout(total=AVATAR_REQUEST_TIMEOUT_SECONDS)
-        connector = aiohttp.TCPConnector(limit=AVATAR_CHECK_CONCURRENCY)
-        semaphore = asyncio.Semaphore(AVATAR_CHECK_CONCURRENCY)
-        headers = {
-            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            "User-Agent": f"AstrBot/{PLUGIN_NAME}",
-        }
-
-        async with aiohttp.ClientSession(
-            timeout=timeout,
-            connector=connector,
-            headers=headers,
-            trust_env=True,
-        ) as session:
-
-            async def check_one(user_id: str) -> dict[str, Any]:
-                try:
-                    async with semaphore:
-                        async with session.head(
-                            AVATAR_CDN_URL,
-                            params={"b": "qq", "nk": user_id, "s": str(AVATAR_SIZE)},
-                            allow_redirects=True,
-                        ) as response:
-                            revision = self._avatar_revision_from_headers(
-                                response.headers
-                            )
-                            return {
-                                "user_id": user_id,
-                                "available": 200 <= response.status < 400
-                                and bool(revision),
-                                "revision": revision,
-                            }
-                except (aiohttp.ClientError, asyncio.TimeoutError):
-                    return {
-                        "user_id": user_id,
-                        "available": False,
-                        "revision": "",
-                    }
-
-            return list(
-                await asyncio.gather(*(check_one(user_id) for user_id in user_ids))
-            )
-
-    async def check_avatar_updates(self):
-        """Return current revisions so the browser only reloads changed QQ avatars."""
-
-        if not self._configured_avatar_preview_enabled():
-            return json_response(
-                {
-                    "enabled": False,
-                    "checked_count": 0,
-                    "avatars": [],
-                }
-            )
-
-        payload = await request.json(default={})
-        if not isinstance(payload, Mapping):
-            return error_response("请求数据格式错误。", status_code=400)
-
-        raw_user_ids = payload.get("user_ids", [])
-        if not isinstance(raw_user_ids, list):
-            return error_response("头像校验成员列表格式错误。", status_code=400)
-        if len(raw_user_ids) > MAX_AVATAR_CHECK_COUNT:
-            return error_response(
-                f"每次最多校验 {MAX_AVATAR_CHECK_COUNT} 位成员头像。",
-                status_code=400,
-            )
-
-        user_ids: list[str] = []
-        for raw_user_id in raw_user_ids:
-            user_id = normalize_id(raw_user_id)
-            if user_id and user_id not in user_ids:
-                user_ids.append(user_id)
-        if not user_ids:
-            return json_response(
-                {
-                    "enabled": True,
-                    "checked_count": 0,
-                    "avatars": [],
-                }
-            )
-
-        avatars = await self._check_avatar_revisions(user_ids)
-        return json_response(
-            {
-                "enabled": True,
-                "checked_count": len(user_ids),
-                "avatars": avatars,
-            }
-        )
-
     async def save_plugin_config(self):
         """Validate and persist settings shared with AstrBot's config page."""
 
@@ -829,12 +678,6 @@ class Main(Star):
                 )
                 == LOG_DETAIL_FULL
                 else "摘要"
-            ),
-            "avatar_preview_enabled": self._normalize_config_bool(
-                payload.get(
-                    "avatar_preview_enabled",
-                    current["avatar_preview_enabled"],
-                )
             ),
         }
 

@@ -13,10 +13,6 @@ const state = {
   showConfiguredOnly: false,
   loadingMembers: false,
   resettingProfile: false,
-  avatarPreviewEnabled: false,
-  avatarVersions: new Map(),
-  avatarCheckedIds: new Set(),
-  avatarCheckGeneration: 0,
 };
 
 const elements = {
@@ -27,7 +23,6 @@ const elements = {
   groupErrors: document.getElementById("group-errors"),
   configMessageWindowSize: document.getElementById("config-message-window-size"),
   configLogDetail: document.getElementById("config-log-detail"),
-  configAvatarPreview: document.getElementById("config-avatar-preview"),
   savePluginConfig: document.getElementById("save-plugin-config"),
   emptyState: document.getElementById("empty-state"),
   editor: document.getElementById("editor"),
@@ -160,15 +155,6 @@ function applyPluginConfig(config) {
     ? String(messageWindowSize)
     : "20";
   elements.configLogDetail.value = config?.log_detail === "全部" ? "全部" : "摘要";
-  const avatarPreviewEnabled = config?.avatar_preview_enabled === true;
-  const avatarPreviewChanged = state.avatarPreviewEnabled !== avatarPreviewEnabled;
-  state.avatarPreviewEnabled = avatarPreviewEnabled;
-  elements.configAvatarPreview.checked = avatarPreviewEnabled;
-  if (avatarPreviewChanged) {
-    state.avatarCheckGeneration += 1;
-    state.avatarCheckedIds.clear();
-    if (state.members.length) renderMembers({ forceAvatarCheck: avatarPreviewEnabled });
-  }
 }
 
 async function loadPluginConfig() {
@@ -193,7 +179,6 @@ async function savePluginConfig() {
     const result = await bridge.apiPost("config", {
       message_window_size: messageWindowSize,
       log_detail: elements.configLogDetail.value,
-      avatar_preview_enabled: elements.configAvatarPreview.checked,
     });
     applyPluginConfig(result);
     showNotice("插件配置已保存，页面展示与新的 LLM 请求会使用最新设置。", "success");
@@ -430,96 +415,6 @@ function createTermEditor(member, index, config) {
   return wrapper;
 }
 
-function avatarImageUrl(userId, revision) {
-  const params = new URLSearchParams({
-    b: "qq",
-    nk: String(userId),
-    s: "100",
-    v: revision,
-  });
-  return `https://q1.qlogo.cn/g?${params.toString()}`;
-}
-
-function attachAvatarImage(avatar, userId, revision) {
-  if (!state.avatarPreviewEnabled || !revision) return;
-  const currentImage = avatar.querySelector(".member-avatar-image");
-  if (avatar.dataset.avatarRevision === revision && currentImage) return;
-
-  currentImage?.remove();
-  avatar.classList.remove("avatar-loaded");
-  avatar.dataset.avatarRevision = revision;
-
-  const image = document.createElement("img");
-  image.className = "member-avatar-image";
-  image.alt = "";
-  image.loading = "lazy";
-  image.decoding = "async";
-  image.referrerPolicy = "no-referrer";
-  image.addEventListener(
-    "load",
-    () => {
-      if (avatar.contains(image)) avatar.classList.add("avatar-loaded");
-    },
-    { once: true },
-  );
-  image.addEventListener(
-    "error",
-    () => {
-      if (!avatar.contains(image)) return;
-      avatar.classList.remove("avatar-loaded");
-      image.remove();
-    },
-    { once: true },
-  );
-  image.src = avatarImageUrl(userId, revision);
-  avatar.appendChild(image);
-}
-
-function updateVisibleAvatar(userId, revision) {
-  for (const avatar of elements.members.querySelectorAll(".member-avatar")) {
-    if (avatar.dataset.userId === userId) {
-      attachAvatarImage(avatar, userId, revision);
-    }
-  }
-}
-
-async function checkVisibleAvatarUpdates(pageMembers, { force = false } = {}) {
-  if (!state.avatarPreviewEnabled || !pageMembers.length) return;
-  const allUserIds = [...new Set(
-    pageMembers
-      .map((member) => String(member.user_id || ""))
-      .filter((userId) => /^\d+$/.test(userId)),
-  )];
-  const userIds = force
-    ? allUserIds
-    : allUserIds.filter((userId) => !state.avatarCheckedIds.has(userId));
-  if (!userIds.length) return;
-
-  for (const userId of userIds) state.avatarCheckedIds.add(userId);
-  const generation = state.avatarCheckGeneration;
-  try {
-    const result = await bridge.apiPost("avatars/check", { user_ids: userIds });
-    if (generation !== state.avatarCheckGeneration) return;
-    if (result?.enabled !== true) {
-      state.avatarPreviewEnabled = false;
-      elements.configAvatarPreview.checked = false;
-      state.avatarCheckedIds.clear();
-      renderMembers();
-      return;
-    }
-    for (const avatar of Array.isArray(result.avatars) ? result.avatars : []) {
-      const userId = String(avatar?.user_id || "");
-      const revision = String(avatar?.revision || "");
-      if (!avatar?.available || !/^\d+$/.test(userId) || !revision) continue;
-      state.avatarVersions.set(userId, revision);
-      updateVisibleAvatar(userId, revision);
-    }
-  } catch (error) {
-    for (const userId of userIds) state.avatarCheckedIds.delete(userId);
-    console.warn("头像更新校验失败：", error);
-  }
-}
-
 function renderMember(member, index) {
   const card = document.createElement("article");
   card.className = "member-card";
@@ -532,11 +427,6 @@ function renderMember(member, index) {
     "member-avatar",
     (member.nickname || member.user_id).slice(0, 2),
   );
-  avatar.dataset.userId = String(member.user_id);
-  const avatarRevision = state.avatarVersions.get(String(member.user_id));
-  if (state.avatarPreviewEnabled && avatarRevision) {
-    attachAvatarImage(avatar, String(member.user_id), avatarRevision);
-  }
   identity.appendChild(avatar);
   const identityText = document.createElement("div");
   identityText.className = "identity-text";
@@ -698,7 +588,7 @@ function updateConfiguredFilter() {
   );
 }
 
-function renderMembers({ scrollToFirst = false, forceAvatarCheck = false } = {}) {
+function renderMembers({ scrollToFirst = false } = {}) {
   const visibleMembers = filteredMembers();
   const totalPages = Math.max(1, Math.ceil(visibleMembers.length / state.memberPageSize));
   state.memberPage = Math.min(Math.max(state.memberPage, 1), totalPages);
@@ -733,10 +623,6 @@ function renderMembers({ scrollToFirst = false, forceAvatarCheck = false } = {})
   for (const member of pageMembers) {
     const originalIndex = state.members.indexOf(member);
     elements.members.appendChild(renderMember(member, originalIndex));
-  }
-
-  if (state.avatarPreviewEnabled) {
-    void checkVisibleAvatarUpdates(pageMembers, { force: forceAvatarCheck });
   }
 
   if (scrollToFirst) {
@@ -774,7 +660,7 @@ async function refreshMembers() {
     renderCustomIdentityFields();
     if (result.group_name) state.selectedGroup.group_name = result.group_name;
     elements.selectedGroupName.textContent = state.selectedGroup.group_name || `群 ${state.selectedGroup.group_id}`;
-    renderMembers({ forceAvatarCheck: state.avatarPreviewEnabled });
+    renderMembers();
     elements.memberRefreshTime.textContent = `最近读取：${formatRefreshTime()}`;
     showNotice(
       `已刷新 ${state.members.length} 位群成员；平台昵称、群名片等资料已更新，已配置身份字段会按 QQ 号匹配保留。请保存本群设定以写入最新成员信息。`,
@@ -919,8 +805,6 @@ function selectGroup() {
   state.memberSearch = "";
   state.memberPage = 1;
   state.showConfiguredOnly = false;
-  state.avatarCheckGeneration += 1;
-  state.avatarCheckedIds.clear();
   elements.usageRules.value = "";
   elements.memberSearch.value = "";
   elements.memberRefreshTime.textContent = "最近读取：尚未读取";
