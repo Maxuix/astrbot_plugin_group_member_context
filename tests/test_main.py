@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -162,18 +163,85 @@ async def collect_results(generator):
 
 def test_identity_card_template_renders_field_values():
     html = Template(plugin_module.IDENTITY_CARD_TEMPLATE).render(
-        group_id="1001",
-        group_name="研发群",
-        injection_enabled=True,
         user_id="2002",
         display_name="A",
-        card="A同学",
+        avatar_data_url="data:image/png;base64,YQ==",
         avatar_text="A",
         fields=[{"label": "游戏名", "values": ["Tony"]}],
-        field_count=1,
     )
     assert "游戏名" in html
     assert "Tony" in html
+    assert "data:image/png;base64,YQ==" in html
+
+
+def test_help_card_separates_command_formats_from_examples():
+    html = Template(plugin_module.HELP_CARD_TEMPLATE).render()
+
+    assert "普通成员命令" in html
+    assert "管理员命令" in html
+    assert "使用示例" in html
+    assert "/群身份 add &lt;@群成员/QQ号&gt;" in html
+    assert "/群身份 add @小明 游戏名=Tony Stark" in html
+
+
+def test_tag_commands_are_registered_under_group_identity():
+    root = plugin_module.Main.group_identity.parent_group
+    tag_group = next(
+        item
+        for item in root.sub_command_filters
+        if getattr(item, "group_name", "") == "tag"
+    )
+
+    assert {item.command_name for item in tag_group.sub_command_filters} == {
+        "add",
+        "remove",
+    }
+
+
+def test_native_config_keeps_group_policy_out_of_astrbot_config_page():
+    schema_path = Path(plugin_module.__file__).with_name("_conf_schema.json")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert "admin_command_whitelist" not in schema
+    assert "admin_command_blacklist" not in schema
+    assert "allow_members_admin_commands" not in schema
+    assert (
+        "更多配置项请通过插件 Web UI 进行配置"
+        in schema["avatar_preview_enabled"]["hint"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_global_admin_policy_migrates_to_existing_groups_once():
+    plugin = plugin_module.Main(
+        FakeContext(),
+        config={
+            "admin_command_whitelist": ["2001"],
+            "admin_command_blacklist": ["2002"],
+            "allow_members_admin_commands": True,
+        },
+    )
+    plugin.get_kv_data = AsyncMock(
+        return_value={
+            "sessions": {
+                "bot-a:GroupMessage:1001": {
+                    "platform_id": "bot-a",
+                    "group_id": "1001",
+                    "members": [],
+                }
+            }
+        }
+    )
+    plugin.put_kv_data = AsyncMock()
+
+    await plugin.initialize()
+
+    profile = plugin._store["sessions"]["bot-a:GroupMessage:1001"]
+    assert profile["admin_command_whitelist"] == ["2001"]
+    assert profile["admin_command_blacklist"] == ["2002"]
+    assert profile["allow_members_admin_commands"] is True
+    assert plugin._store["admin_policy_migrated"] is True
+    plugin.put_kv_data.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -190,9 +258,6 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
         "message_window_size": 18,
         "log_detail": "摘要",
         "avatar_preview_enabled": False,
-        "admin_command_whitelist": [],
-        "admin_command_blacklist": [],
-        "allow_members_admin_commands": False,
     }
 
     monkeypatch.setattr(
@@ -203,9 +268,6 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
                 "message_window_size": 48,
                 "log_detail": "全部",
                 "avatar_preview_enabled": True,
-                "admin_command_whitelist": ["2001"],
-                "admin_command_blacklist": ["2002"],
-                "allow_members_admin_commands": True,
             }
         ),
     )
@@ -216,26 +278,17 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
         "message_window_size": 48,
         "log_detail": "全部",
         "avatar_preview_enabled": True,
-        "admin_command_whitelist": ["2001"],
-        "admin_command_blacklist": ["2002"],
-        "allow_members_admin_commands": True,
     }
     assert config == {
         "message_window_size": 48,
         "log_detail": "全部",
         "avatar_preview_enabled": True,
-        "admin_command_whitelist": ["2001"],
-        "admin_command_blacklist": ["2002"],
-        "allow_members_admin_commands": True,
     }
     assert config.saved_values == [
         {
             "message_window_size": 48,
             "log_detail": "全部",
             "avatar_preview_enabled": True,
-            "admin_command_whitelist": ["2001"],
-            "admin_command_blacklist": ["2002"],
-            "allow_members_admin_commands": True,
         }
     ]
     assert plugin._configured_message_window_size() == 48
@@ -342,6 +395,9 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
                     },
                 ],
                 "usage_rules": "回答技术问题时先给结论。",
+                "admin_command_whitelist": ["2001"],
+                "admin_command_blacklist": ["2002"],
+                "allow_members_admin_commands": True,
                 "message_window_size": 20,
             }
         ),
@@ -351,6 +407,9 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
     assert saved["custom_identity_fields"] == ["游戏名"]
     assert saved["usage_rules"] == "回答技术问题时先给结论。"
     assert saved["usage_rules_customized"] is True
+    assert saved["admin_command_whitelist"] == ["2001"]
+    assert saved["admin_command_blacklist"] == ["2002"]
+    assert saved["allow_members_admin_commands"] is True
     plugin.put_kv_data.assert_awaited_once()
 
     plugin._find_aiocqhttp_platform("bot-a").get_client().member_payload = [
@@ -377,6 +436,9 @@ async def test_page_flow_and_exact_session_injection(monkeypatch):
     assert refreshed_member["custom_fields"] == {"游戏名": ["TonyGame"]}
     assert refreshed_member["note"] == "项目负责人"
     assert refreshed["usage_rules"] == "回答技术问题时先给结论。"
+    assert refreshed["admin_command_whitelist"] == ["2001"]
+    assert refreshed["admin_command_blacklist"] == ["2002"]
+    assert refreshed["allow_members_admin_commands"] is True
     assert refreshed["default_usage_rules"] == plugin_module.DEFAULT_USAGE_RULES
 
     matching_request = SimpleNamespace(extra_user_content_parts=[])
@@ -813,6 +875,54 @@ async def test_group_admin_can_add_group_scoped_custom_identity_with_at_target()
 
 
 @pytest.mark.asyncio
+async def test_group_admin_can_manage_custom_tags_without_deleting_used_data():
+    context = FakeContext()
+    context.platform_manager.platform_insts[0].client.member_payload = [
+        {"user_id": 2001, "nickname": "管理员", "role": "owner"},
+    ]
+    plugin = plugin_module.Main(context)
+    plugin.get_kv_data = AsyncMock(return_value={})
+    plugin.put_kv_data = AsyncMock()
+    await plugin.initialize()
+    event = FakeEvent("1001", sender_id="2001", sender_role="owner")
+
+    added = await collect_results(plugin.group_identity_tag_add(event, "游戏名"))
+    assert added[0].text == "成功：身份标签已添加。"
+
+    profile = plugin._store["sessions"]["bot-a:GroupMessage:1001"]
+    profile["members"][0]["custom_fields"] = {"游戏名": ["Tony"]}
+    refused = await collect_results(plugin.group_identity_tag_remove(event, "游戏名"))
+    assert refused[0].text == "失败：该标签仍在使用，请先删除对应身份。"
+
+    profile["members"][0]["custom_fields"]["游戏名"] = []
+    removed = await collect_results(plugin.group_identity_tag_remove(event, "游戏名"))
+    assert removed[0].text == "成功：身份标签已删除。"
+    assert profile["custom_identity_fields"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_policy_is_isolated_per_group_and_can_allow_members():
+    plugin = plugin_module.Main(FakeContext())
+    plugin._store["sessions"] = {
+        "bot-a:GroupMessage:1001": {
+            "allow_members_admin_commands": True,
+            "admin_command_whitelist": ["2002"],
+            "admin_command_blacklist": [],
+        },
+        "bot-a:GroupMessage:1002": {
+            "allow_members_admin_commands": False,
+            "admin_command_whitelist": [],
+            "admin_command_blacklist": [],
+        },
+    }
+    platform = plugin._find_aiocqhttp_platform("bot-a")
+    event = FakeEvent("1001", sender_id="2002", sender_role="member")
+
+    assert await plugin._admin_command_allowed(event, platform, "1001") is True
+    assert await plugin._admin_command_allowed(event, platform, "1002") is False
+
+
+@pytest.mark.asyncio
 async def test_numeric_target_and_self_commands_keep_spaced_default_identity():
     context = FakeContext()
     context.platform_manager.platform_insts[0].client.member_payload = [
@@ -855,24 +965,23 @@ async def test_numeric_target_and_self_commands_keep_spaced_default_identity():
 
 @pytest.mark.asyncio
 async def test_admin_command_whitelist_restricts_without_blacklist_override():
-    plugin = plugin_module.Main(
-        FakeContext(),
-        config={
-            "admin_command_whitelist": ["2999"],
-            "admin_command_blacklist": ["2001"],
-        },
-    )
+    plugin = plugin_module.Main(FakeContext())
+    profile = {
+        "admin_command_whitelist": ["2999"],
+        "admin_command_blacklist": ["2001"],
+    }
+    plugin._store["sessions"]["bot-a:GroupMessage:1001"] = profile
     platform = plugin._find_aiocqhttp_platform("bot-a")
     event = FakeEvent("1001", sender_id="2001", sender_role="owner")
 
     assert await plugin._admin_command_allowed(event, platform, "1001") is False
 
-    plugin.config["admin_command_whitelist"] = ["2001"]
+    profile["admin_command_whitelist"] = ["2001"]
     assert await plugin._admin_command_allowed(event, platform, "1001") is True
 
 
 @pytest.mark.asyncio
-async def test_member_self_service_cannot_create_group_label_but_can_use_existing_one():
+async def test_self_service_custom_labels_are_admin_only_and_must_exist():
     context = FakeContext()
     context.platform_manager.platform_insts[0].client.member_payload = [
         {"user_id": 2002, "nickname": "A", "role": "member"},
@@ -884,11 +993,19 @@ async def test_member_self_service_cannot_create_group_label_but_can_use_existin
     event = FakeEvent("1001", sender_id="2002", sender_role="member")
 
     rejected = await collect_results(plugin.group_identity_me_add(event, "游戏名=Tony"))
-    assert rejected[0].text == "失败：普通成员不能创建新的身份标签。"
+    assert rejected[0].text == "失败：自定义身份标签仅限管理员使用。"
 
     profile = plugin._store["sessions"]["bot-a:GroupMessage:1001"]
     profile["custom_identity_fields"] = ["游戏名"]
-    accepted = await collect_results(plugin.group_identity_me_add(event, "游戏名=Tony"))
+    still_rejected = await collect_results(
+        plugin.group_identity_me_add(event, "游戏名=Tony")
+    )
+    assert still_rejected[0].text == "失败：自定义身份标签仅限管理员使用。"
+
+    admin_event = FakeEvent("1001", sender_id="2002", sender_role="owner")
+    accepted = await collect_results(
+        plugin.group_identity_me_add(admin_event, "游戏名=Tony")
+    )
     assert accepted[0].text == "成功：身份已添加。"
 
 
@@ -923,6 +1040,9 @@ async def test_list_command_renders_webui_style_identity_card_without_note():
     )
     plugin.put_kv_data = AsyncMock()
     plugin.html_render = AsyncMock(return_value="identity-card.png")
+    plugin._download_identity_avatar = AsyncMock(
+        return_value="data:image/png;base64,YQ=="
+    )
     await plugin.initialize()
     event = FakeEvent("1001", sender_id="2002")
 
@@ -936,6 +1056,21 @@ async def test_list_command_renders_webui_style_identity_card_without_note():
         {"label": "游戏名", "values": ["ValorantTony"]},
     ]
     assert "note" not in render_data
+    assert "group_name" not in render_data
+    assert render_data["display_name"] == "A同学"
+    assert render_data["avatar_data_url"] == "data:image/png;base64,YQ=="
+
+
+@pytest.mark.asyncio
+async def test_help_command_renders_image_card():
+    plugin = plugin_module.Main(FakeContext())
+    plugin.html_render = AsyncMock(return_value="help-card.png")
+
+    results = await collect_results(plugin.group_identity_help(FakeEvent("1001")))
+
+    assert results[0].kind == "image"
+    assert results[0].image == "help-card.png"
+    assert plugin.html_render.await_args.args[0] == plugin_module.HELP_CARD_TEMPLATE
 
 
 @pytest.mark.asyncio

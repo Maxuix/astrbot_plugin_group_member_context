@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import hashlib
 import inspect
@@ -25,7 +26,7 @@ from astrbot.api.web import error_response, json_response, request
 from astrbot.core.agent.message import TextPart
 from astrbot.core.star.filter.command import GreedyStr
 
-from .identity_card import IDENTITY_CARD_TEMPLATE
+from .identity_card import HELP_CARD_TEMPLATE, IDENTITY_CARD_TEMPLATE
 
 from .member_context import (
     DEFAULT_MESSAGE_WINDOW_SIZE,
@@ -52,6 +53,7 @@ from .member_context import (
     normalize_message_window_size,
     normalize_match_text,
     normalize_member,
+    normalize_qq_id_list,
     normalize_revision,
     normalize_store,
     normalize_usage_rules,
@@ -69,6 +71,7 @@ AVATAR_SIZE = 100
 MAX_AVATAR_CHECK_COUNT = 100
 AVATAR_CHECK_CONCURRENCY = 8
 AVATAR_REQUEST_TIMEOUT_SECONDS = 5
+MAX_IDENTITY_CARD_AVATAR_BYTES = 2 * 1024 * 1024
 ADMIN_COMMAND_WHITELIST_KEY = "admin_command_whitelist"
 ADMIN_COMMAND_BLACKLIST_KEY = "admin_command_blacklist"
 ALLOW_MEMBER_ADMIN_COMMANDS_KEY = "allow_members_admin_commands"
@@ -103,7 +106,11 @@ class Main(Star):
         self._config_lock = asyncio.Lock()
         self._store_lock = asyncio.Lock()
         self._store_loaded = False
-        self._store: dict[str, Any] = {"version": STORE_VERSION, "sessions": {}}
+        self._store: dict[str, Any] = {
+            "version": STORE_VERSION,
+            "admin_policy_migrated": False,
+            "sessions": {},
+        }
         self._window_lock = asyncio.Lock()
         self._recent_messages: dict[str, deque[dict[str, Any]]] = {}
         self._window_seeded: set[str] = set()
@@ -178,10 +185,30 @@ class Main(Star):
                 return
             raw = await self.get_kv_data(STORE_KEY, {})
             self._store = normalize_store(raw)
+            await self._migrate_legacy_admin_policy()
             self._store_loaded = True
 
     async def _persist_store(self) -> None:
         await self.put_kv_data(STORE_KEY, self._store)
+
+    async def _migrate_legacy_admin_policy(self) -> None:
+        """Copy the former global command policy into every existing group once."""
+
+        if self._store.get("admin_policy_migrated") is True:
+            return
+        whitelist = self._configured_admin_command_whitelist()
+        blacklist = self._configured_admin_command_blacklist()
+        allow_members = self._configured_allow_member_admin_commands()
+        sessions = self._stored_sessions()
+        for profile in sessions.values():
+            if not isinstance(profile, dict):
+                continue
+            profile[ADMIN_COMMAND_WHITELIST_KEY] = list(whitelist)
+            profile[ADMIN_COMMAND_BLACKLIST_KEY] = list(blacklist)
+            profile[ALLOW_MEMBER_ADMIN_COMMANDS_KEY] = allow_members
+        self._store["admin_policy_migrated"] = True
+        if sessions or whitelist or blacklist or allow_members:
+            await self._persist_store()
 
     @staticmethod
     def _platform_id(platform: object) -> str:
@@ -299,16 +326,7 @@ class Main(Star):
 
     @staticmethod
     def _normalize_qq_id_list(value: object) -> list[str]:
-        if isinstance(value, (str, int)):
-            value = [value]
-        if not isinstance(value, list):
-            return []
-        result: list[str] = []
-        for item in value:
-            user_id = normalize_id(item)
-            if user_id and user_id not in result:
-                result.append(user_id)
-        return result
+        return normalize_qq_id_list(value)
 
     def _configured_admin_command_whitelist(self) -> list[str]:
         value = (
@@ -344,11 +362,6 @@ class Main(Star):
             "message_window_size": self._configured_message_window_size(),
             "log_detail": log_detail,
             "avatar_preview_enabled": self._configured_avatar_preview_enabled(),
-            ADMIN_COMMAND_WHITELIST_KEY: (self._configured_admin_command_whitelist()),
-            ADMIN_COMMAND_BLACKLIST_KEY: (self._configured_admin_command_blacklist()),
-            ALLOW_MEMBER_ADMIN_COMMANDS_KEY: (
-                self._configured_allow_member_admin_commands()
-            ),
         }
 
     async def _persist_plugin_config(self, values: Mapping[str, Any]) -> None:
@@ -663,6 +676,16 @@ class Main(Star):
                 payload.get("injection_enabled"),
                 default=True,
             ),
+            ADMIN_COMMAND_WHITELIST_KEY: normalize_qq_id_list(
+                payload.get(ADMIN_COMMAND_WHITELIST_KEY, [])
+            ),
+            ADMIN_COMMAND_BLACKLIST_KEY: normalize_qq_id_list(
+                payload.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
+            ),
+            ALLOW_MEMBER_ADMIN_COMMANDS_KEY: normalize_enabled(
+                payload.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
+                default=False,
+            ),
             "revision": normalize_revision(payload.get("revision")),
             "message_window_size": normalize_message_window_size(
                 payload.get("message_window_size", DEFAULT_MESSAGE_WINDOW_SIZE)
@@ -735,6 +758,26 @@ class Main(Star):
                                 for member in saved_profile.get("members", [])
                                 if isinstance(member, Mapping)
                             )
+                            or bool(
+                                normalize_qq_id_list(
+                                    saved_profile.get(
+                                        ADMIN_COMMAND_WHITELIST_KEY,
+                                        [],
+                                    )
+                                )
+                            )
+                            or bool(
+                                normalize_qq_id_list(
+                                    saved_profile.get(
+                                        ADMIN_COMMAND_BLACKLIST_KEY,
+                                        [],
+                                    )
+                                )
+                            )
+                            or normalize_enabled(
+                                saved_profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
+                                default=False,
+                            )
                         ),
                         "member_count": len(saved_profile.get("members", [])),
                         "injection_enabled": normalize_enabled(
@@ -769,6 +812,20 @@ class Main(Star):
                             has_custom_identity(member)
                             for member in profile.get("members", [])
                             if isinstance(member, Mapping)
+                        )
+                        or bool(
+                            normalize_qq_id_list(
+                                profile.get(ADMIN_COMMAND_WHITELIST_KEY, [])
+                            )
+                        )
+                        or bool(
+                            normalize_qq_id_list(
+                                profile.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
+                            )
+                        )
+                        or normalize_enabled(
+                            profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
+                            default=False,
                         )
                     ),
                     "member_count": len(profile.get("members", [])),
@@ -932,24 +989,6 @@ class Main(Star):
                     current["avatar_preview_enabled"],
                 )
             ),
-            ADMIN_COMMAND_WHITELIST_KEY: self._normalize_qq_id_list(
-                payload.get(
-                    ADMIN_COMMAND_WHITELIST_KEY,
-                    current[ADMIN_COMMAND_WHITELIST_KEY],
-                )
-            ),
-            ADMIN_COMMAND_BLACKLIST_KEY: self._normalize_qq_id_list(
-                payload.get(
-                    ADMIN_COMMAND_BLACKLIST_KEY,
-                    current[ADMIN_COMMAND_BLACKLIST_KEY],
-                )
-            ),
-            ALLOW_MEMBER_ADMIN_COMMANDS_KEY: self._normalize_config_bool(
-                payload.get(
-                    ALLOW_MEMBER_ADMIN_COMMANDS_KEY,
-                    current[ALLOW_MEMBER_ADMIN_COMMANDS_KEY],
-                )
-            ),
         }
 
         try:
@@ -977,6 +1016,9 @@ class Main(Star):
                 {
                     "revision": 0,
                     "injection_enabled": True,
+                    ADMIN_COMMAND_WHITELIST_KEY: [],
+                    ADMIN_COMMAND_BLACKLIST_KEY: [],
+                    ALLOW_MEMBER_ADMIN_COMMANDS_KEY: False,
                     "exists": False,
                 }
             )
@@ -986,6 +1028,22 @@ class Main(Star):
                 "injection_enabled": normalize_enabled(
                     profile.get("injection_enabled"),
                     default=True,
+                ),
+                ADMIN_COMMAND_WHITELIST_KEY: normalize_qq_id_list(
+                    profile.get(ADMIN_COMMAND_WHITELIST_KEY, [])
+                    if isinstance(profile, Mapping)
+                    else []
+                ),
+                ADMIN_COMMAND_BLACKLIST_KEY: normalize_qq_id_list(
+                    profile.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
+                    if isinstance(profile, Mapping)
+                    else []
+                ),
+                ALLOW_MEMBER_ADMIN_COMMANDS_KEY: normalize_enabled(
+                    profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY)
+                    if isinstance(profile, Mapping)
+                    else None,
+                    default=False,
                 ),
                 "exists": True,
             }
@@ -1057,6 +1115,22 @@ class Main(Star):
                     else None,
                     default=True,
                 ),
+                ADMIN_COMMAND_WHITELIST_KEY: normalize_qq_id_list(
+                    profile.get(ADMIN_COMMAND_WHITELIST_KEY, [])
+                    if isinstance(profile, Mapping)
+                    else []
+                ),
+                ADMIN_COMMAND_BLACKLIST_KEY: normalize_qq_id_list(
+                    profile.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
+                    if isinstance(profile, Mapping)
+                    else []
+                ),
+                ALLOW_MEMBER_ADMIN_COMMANDS_KEY: normalize_enabled(
+                    profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY)
+                    if isinstance(profile, Mapping)
+                    else None,
+                    default=False,
+                ),
                 "revision": normalize_revision(
                     profile.get("revision") if isinstance(profile, Mapping) else None
                 ),
@@ -1113,6 +1187,11 @@ class Main(Star):
                 "default_usage_rules": DEFAULT_USAGE_RULES,
                 "custom_identity_fields": custom_identity_fields,
                 "injection_enabled": profile["injection_enabled"],
+                ADMIN_COMMAND_WHITELIST_KEY: profile[ADMIN_COMMAND_WHITELIST_KEY],
+                ADMIN_COMMAND_BLACKLIST_KEY: profile[ADMIN_COMMAND_BLACKLIST_KEY],
+                ALLOW_MEMBER_ADMIN_COMMANDS_KEY: profile[
+                    ALLOW_MEMBER_ADMIN_COMMANDS_KEY
+                ],
                 "revision": profile["revision"],
                 "message_window_size": self._configured_message_window_size(),
                 "prompt": prompt,
@@ -1184,6 +1263,16 @@ class Main(Star):
                     existing_profile.get("injection_enabled"),
                     default=True,
                 ),
+                ADMIN_COMMAND_WHITELIST_KEY: normalize_qq_id_list(
+                    existing_profile.get(ADMIN_COMMAND_WHITELIST_KEY, [])
+                ),
+                ADMIN_COMMAND_BLACKLIST_KEY: normalize_qq_id_list(
+                    existing_profile.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
+                ),
+                ALLOW_MEMBER_ADMIN_COMMANDS_KEY: normalize_enabled(
+                    existing_profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
+                    default=False,
+                ),
                 "revision": current_revision + 1,
                 "message_window_size": self._configured_message_window_size(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -1203,6 +1292,11 @@ class Main(Star):
                 "members": reset_members,
                 "custom_identity_fields": reset_profile["custom_identity_fields"],
                 "injection_enabled": reset_profile["injection_enabled"],
+                ADMIN_COMMAND_WHITELIST_KEY: reset_profile[ADMIN_COMMAND_WHITELIST_KEY],
+                ADMIN_COMMAND_BLACKLIST_KEY: reset_profile[ADMIN_COMMAND_BLACKLIST_KEY],
+                ALLOW_MEMBER_ADMIN_COMMANDS_KEY: reset_profile[
+                    ALLOW_MEMBER_ADMIN_COMMANDS_KEY
+                ],
                 "revision": reset_profile["revision"],
                 "message_window_size": self._configured_message_window_size(),
             }
@@ -1231,6 +1325,11 @@ class Main(Star):
                 "prompt": prompt,
                 "custom_identity_fields": custom_identity_fields,
                 "injection_enabled": profile["injection_enabled"],
+                ADMIN_COMMAND_WHITELIST_KEY: profile[ADMIN_COMMAND_WHITELIST_KEY],
+                ADMIN_COMMAND_BLACKLIST_KEY: profile[ADMIN_COMMAND_BLACKLIST_KEY],
+                ALLOW_MEMBER_ADMIN_COMMANDS_KEY: profile[
+                    ALLOW_MEMBER_ADMIN_COMMANDS_KEY
+                ],
                 "revision": profile["revision"],
                 "usage_rules": profile["usage_rules"],
                 "usage_rules_customized": profile["usage_rules"] != DEFAULT_USAGE_RULES,
@@ -1304,6 +1403,9 @@ class Main(Star):
             "custom_identity_fields": [],
             "usage_rules": DEFAULT_USAGE_RULES,
             "injection_enabled": True,
+            ADMIN_COMMAND_WHITELIST_KEY: [],
+            ADMIN_COMMAND_BLACKLIST_KEY: [],
+            ALLOW_MEMBER_ADMIN_COMMANDS_KEY: False,
             "revision": 1,
             "message_window_size": self._configured_message_window_size(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -1363,15 +1465,30 @@ class Main(Star):
                 return False
 
         has_base_permission = role in {"owner", "admin"}
-        if self._configured_allow_member_admin_commands() and role == "member":
+        platform_id = self._platform_id(platform)
+        profile = self._stored_sessions().get(
+            build_session_key(platform_id, group_id),
+            {},
+        )
+        if not isinstance(profile, Mapping):
+            profile = {}
+        if (
+            normalize_enabled(
+                profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
+                default=False,
+            )
+            and role == "member"
+        ):
             has_base_permission = True
         if not has_base_permission:
             return False
 
-        whitelist = self._configured_admin_command_whitelist()
+        whitelist = normalize_qq_id_list(profile.get(ADMIN_COMMAND_WHITELIST_KEY, []))
         if whitelist:
             return sender_id in whitelist
-        return sender_id not in self._configured_admin_command_blacklist()
+        return sender_id not in normalize_qq_id_list(
+            profile.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
+        )
 
     @staticmethod
     def _target_mentions(event: AstrMessageEvent) -> tuple[list[str], bool]:
@@ -1499,6 +1616,23 @@ class Main(Star):
         reserved_keys = {field.casefold() for field in RESERVED_IDENTITY_FIELDS}
         if label.casefold() in reserved_keys:
             return "失败：该字段由平台维护，不能通过指令修改。"
+        standard_field = next(
+            (
+                field
+                for field_label, field in WRITABLE_STANDARD_IDENTITY_FIELDS.items()
+                if field_label.casefold() == label.casefold()
+            ),
+            "",
+        )
+        if self_service and not standard_field:
+            if not await self._admin_command_allowed(event, platform, group_id):
+                return "失败：自定义身份标签仅限管理员使用。"
+            profile = self._stored_sessions().get(session_key, {})
+            fields = self._profile_custom_identity_fields(
+                profile if isinstance(profile, Mapping) else {}
+            )
+            if not any(field.casefold() == label.casefold() for field in fields):
+                return "失败：身份标签不存在，请先使用 /群身份 tag add 创建。"
 
         async with self._store_lock:
             raw_profile = self._stored_sessions().get(session_key)
@@ -1530,14 +1664,6 @@ class Main(Star):
                 )
                 members[member_index] = member
 
-            standard_field = next(
-                (
-                    field
-                    for field_label, field in WRITABLE_STANDARD_IDENTITY_FIELDS.items()
-                    if field_label.casefold() == label.casefold()
-                ),
-                "",
-            )
             fields = self._profile_custom_identity_fields(raw_profile)
             custom_label = next(
                 (field for field in fields if field.casefold() == label.casefold()),
@@ -1547,7 +1673,7 @@ class Main(Star):
                 if remove:
                     return "失败：身份标签不存在。"
                 if self_service:
-                    return "失败：普通成员不能创建新的身份标签。"
+                    return "失败：身份标签不存在，请先使用 /群身份 tag add 创建。"
                 if len(fields) >= MAX_CUSTOM_IDENTITY_FIELD_COUNT:
                     return "失败：本群自定义身份标签已达到上限。"
                 fields.append(label)
@@ -1623,6 +1749,85 @@ class Main(Star):
             await self._persist_store()
         return f"成功：身份注入已{'开启' if enabled else '关闭'}。"
 
+    async def _mutate_group_tag(
+        self,
+        event: AstrMessageEvent,
+        label: str,
+        *,
+        remove: bool,
+    ) -> str:
+        (
+            session_key,
+            _platform_id,
+            group_id,
+            platform,
+        ) = await self._ensure_command_profile(event)
+        if not await self._admin_command_allowed(event, platform, group_id):
+            return "失败：你没有权限执行该指令。"
+        raw_label = " ".join(str(label).replace("\x00", "").split())
+        if not raw_label:
+            return "失败：缺少身份标签。"
+        if len(raw_label) > MAX_CUSTOM_IDENTITY_FIELD_LENGTH:
+            return "失败：身份标签过长。"
+        normalized_label = clean_text(
+            raw_label,
+            max_length=MAX_CUSTOM_IDENTITY_FIELD_LENGTH,
+        )
+        protected_labels = {
+            *(field.casefold() for field in RESERVED_IDENTITY_FIELDS),
+            *(field.casefold() for field in WRITABLE_STANDARD_IDENTITY_FIELDS),
+        }
+        if normalized_label.casefold() in protected_labels:
+            return "失败：内置身份标签不能添加或删除。"
+
+        async with self._store_lock:
+            profile = self._stored_sessions().get(session_key)
+            if not isinstance(profile, dict):
+                return "失败：本群身份资料不存在。"
+            fields = self._profile_custom_identity_fields(profile)
+            existing_label = next(
+                (
+                    field
+                    for field in fields
+                    if field.casefold() == normalized_label.casefold()
+                ),
+                "",
+            )
+            if remove:
+                if not existing_label:
+                    return "失败：身份标签不存在。"
+                for member in profile.get("members", []):
+                    if not isinstance(member, Mapping):
+                        continue
+                    custom_fields = member.get("custom_fields", {})
+                    values = (
+                        custom_fields.get(existing_label, [])
+                        if isinstance(custom_fields, Mapping)
+                        else []
+                    )
+                    if isinstance(values, list) and any(
+                        clean_text(value) for value in values
+                    ):
+                        return "失败：该标签仍在使用，请先删除对应身份。"
+                fields.remove(existing_label)
+                for member in profile.get("members", []):
+                    if not isinstance(member, dict):
+                        continue
+                    custom_fields = member.get("custom_fields")
+                    if isinstance(custom_fields, dict):
+                        custom_fields.pop(existing_label, None)
+            else:
+                if existing_label:
+                    return "成功：该身份标签已存在。"
+                if len(fields) >= MAX_CUSTOM_IDENTITY_FIELD_COUNT:
+                    return "失败：本群自定义身份标签已达到上限。"
+                fields.append(normalized_label)
+            profile["custom_identity_fields"] = fields
+            profile["revision"] = normalize_revision(profile.get("revision")) + 1
+            profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await self._persist_store()
+        return "成功：身份标签已删除。" if remove else "成功：身份标签已添加。"
+
     @staticmethod
     def _identity_card_fields(
         member: Mapping[str, Any],
@@ -1645,9 +1850,34 @@ class Main(Star):
                     fields.append({"label": label, "values": values})
         return fields
 
+    async def _download_identity_avatar(self, user_id: str) -> str:
+        timeout = aiohttp.ClientTimeout(total=AVATAR_REQUEST_TIMEOUT_SECONDS)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    AVATAR_CDN_URL,
+                    params={"b": "qq", "nk": user_id, "s": "140"},
+                ) as response:
+                    if response.status < 200 or response.status >= 300:
+                        return ""
+                    content_type = response.headers.get("Content-Type", "").split(
+                        ";", 1
+                    )[0]
+                    if not content_type.casefold().startswith("image/"):
+                        return ""
+                    body = await response.content.read(
+                        MAX_IDENTITY_CARD_AVATAR_BYTES + 1
+                    )
+                    if not body or len(body) > MAX_IDENTITY_CARD_AVATAR_BYTES:
+                        return ""
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return ""
+        encoded = base64.b64encode(body).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
+
     @filter.command_group("群身份")
     def group_identity(self):
-        """Manage member identities in the current QQ group."""
+        """管理当前 QQ 群的成员身份。"""
 
     @group_identity.command("add", alias={"添加"})
     async def group_identity_add(
@@ -1655,7 +1885,7 @@ class Main(Star):
         event: AstrMessageEvent,
         payload: GreedyStr,
     ):
-        """Add an identity for one member; group administrators only."""
+        """为指定群成员添加身份，仅管理员可用。"""
 
         try:
             (
@@ -1688,7 +1918,7 @@ class Main(Star):
         event: AstrMessageEvent,
         payload: GreedyStr,
     ):
-        """Remove an identity from one member; group administrators only."""
+        """删除指定群成员的身份，仅管理员可用。"""
 
         try:
             (
@@ -1721,7 +1951,7 @@ class Main(Star):
         event: AstrMessageEvent,
         expression: GreedyStr,
     ):
-        """Add an identity for the current sender."""
+        """为自己添加身份，自定义标签仅管理员可用。"""
 
         try:
             result = await self._mutate_member_identity(
@@ -1744,7 +1974,7 @@ class Main(Star):
         event: AstrMessageEvent,
         expression: GreedyStr,
     ):
-        """Remove an identity from the current sender."""
+        """删除自己的身份，自定义标签仅管理员可用。"""
 
         try:
             result = await self._mutate_member_identity(
@@ -1767,7 +1997,7 @@ class Main(Star):
         event: AstrMessageEvent,
         target: str = "",
     ):
-        """Render one member's identities as a compact image card."""
+        """以图片列出指定群成员的身份。"""
 
         try:
             (
@@ -1794,22 +2024,16 @@ class Main(Star):
                 member,
                 self._profile_custom_identity_fields(profile),
             )
-            display_name = member.get("nickname") or member.get("card") or target_id
+            display_name = member.get("card") or member.get("nickname") or target_id
+            avatar_data_url = await self._download_identity_avatar(target_id)
             image = await self.html_render(
                 IDENTITY_CARD_TEMPLATE,
                 {
-                    "group_id": group_id,
-                    "group_name": self._group_label(profile) or f"群 {group_id}",
-                    "injection_enabled": normalize_enabled(
-                        profile.get("injection_enabled"),
-                        default=True,
-                    ),
                     "user_id": target_id,
                     "display_name": display_name,
-                    "card": member.get("card", ""),
+                    "avatar_data_url": avatar_data_url,
                     "avatar_text": str(display_name)[:2],
                     "fields": fields,
-                    "field_count": len(fields),
                 },
                 options={
                     "type": "png",
@@ -1825,9 +2049,49 @@ class Main(Star):
             self.logger.exception("群身份 list 指令执行失败。")
             yield event.plain_result("失败：身份卡片生成失败。")
 
+    @group_identity.group("tag", alias={"标签"})
+    def group_identity_tag(self):
+        """管理本群自定义身份标签，仅管理员可用。"""
+
+    @group_identity_tag.command("add", alias={"添加"})
+    async def group_identity_tag_add(
+        self,
+        event: AstrMessageEvent,
+        label: GreedyStr,
+    ):
+        """添加本群自定义身份标签，仅管理员可用。"""
+
+        try:
+            yield event.plain_result(
+                await self._mutate_group_tag(event, label, remove=False)
+            )
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 tag add 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
+    @group_identity_tag.command("remove", alias={"删除", "rm"})
+    async def group_identity_tag_remove(
+        self,
+        event: AstrMessageEvent,
+        label: GreedyStr,
+    ):
+        """删除本群自定义身份标签，仅管理员可用。"""
+
+        try:
+            yield event.plain_result(
+                await self._mutate_group_tag(event, label, remove=True)
+            )
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 tag remove 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
     @group_identity.command("on", alias={"开启"})
     async def group_identity_on(self, event: AstrMessageEvent):
-        """Enable identity injection for the current group."""
+        """开启本群身份注入，仅管理员可用。"""
 
         try:
             yield event.plain_result(await self._set_group_injection(event, True))
@@ -1839,7 +2103,7 @@ class Main(Star):
 
     @group_identity.command("off", alias={"关闭"})
     async def group_identity_off(self, event: AstrMessageEvent):
-        """Disable identity injection for the current group."""
+        """关闭本群身份注入，仅管理员可用。"""
 
         try:
             yield event.plain_result(await self._set_group_injection(event, False))
@@ -1851,22 +2115,23 @@ class Main(Star):
 
     @group_identity.command("help", alias={"帮助"})
     async def group_identity_help(self, event: AstrMessageEvent):
-        """Show concise command usage."""
+        """以图片显示群身份指令格式和示例。"""
 
-        help_text = "\n".join(
-            [
-                "群身份指令：",
-                "/群身份 add @成员/QQ 身份",
-                "/群身份 add @成员/QQ 标签=身份",
-                "/群身份 remove @成员/QQ [标签=]身份",
-                "/群身份 me [标签=]身份",
-                "/群身份 merm [标签=]身份",
-                "/群身份 list [@成员/QQ]",
-                "/群身份 on | off | help",
-                "未写标签时默认为“昵称”。",
-            ]
-        )
-        yield event.plain_result(help_text)
+        try:
+            image = await self.html_render(
+                HELP_CARD_TEMPLATE,
+                {},
+                options={
+                    "type": "png",
+                    "full_page": True,
+                    "animations": "disabled",
+                    "scale": "css",
+                },
+            )
+            yield event.image_result(image)
+        except Exception:
+            self.logger.exception("群身份 help 指令执行失败。")
+            yield event.plain_result("失败：帮助图片生成失败。")
 
     @filter.on_llm_request()
     async def inject_member_context(

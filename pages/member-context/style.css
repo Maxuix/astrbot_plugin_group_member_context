@@ -409,41 +409,12 @@ h3 {
   font-weight: 700;
 }
 
-.compact-add-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px;
-  margin-top: 8px;
-}
-
 .command-access-list {
   margin-top: 8px;
 }
 
-.admin-candidates {
-  display: grid;
-  gap: 7px;
+.command-access-list + .select-input {
   margin-top: 8px;
-}
-
-.admin-candidate {
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid var(--line-soft);
-  background: var(--paper-deep);
-}
-
-.admin-candidate-name {
-  overflow-wrap: anywhere;
-  color: var(--ink);
-  font: 700 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.admin-candidate-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
 }
 
 .config-shared-help {

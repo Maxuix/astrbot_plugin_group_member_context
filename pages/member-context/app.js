@@ -36,14 +36,13 @@ const elements = {
   configMessageWindowSize: document.getElementById("config-message-window-size"),
   configLogDetail: document.getElementById("config-log-detail"),
   configAvatarPreview: document.getElementById("config-avatar-preview"),
-  configAllowMemberAdmin: document.getElementById("config-allow-member-admin"),
-  configAdminWhitelist: document.getElementById("config-admin-whitelist"),
-  configAdminWhitelistInput: document.getElementById("config-admin-whitelist-input"),
-  configAdminWhitelistAdd: document.getElementById("config-admin-whitelist-add"),
-  configAdminBlacklist: document.getElementById("config-admin-blacklist"),
-  configAdminBlacklistInput: document.getElementById("config-admin-blacklist-input"),
-  configAdminBlacklistAdd: document.getElementById("config-admin-blacklist-add"),
-  groupAdminCandidates: document.getElementById("group-admin-candidates"),
+  groupPolicyPanel: document.getElementById("group-policy-panel"),
+  groupAllowMemberAdmin: document.getElementById("group-allow-member-admin"),
+  groupAdminWhitelist: document.getElementById("group-admin-whitelist"),
+  groupAdminWhitelistSelect: document.getElementById("group-admin-whitelist-select"),
+  groupAdminBlacklist: document.getElementById("group-admin-blacklist"),
+  groupAdminBlacklistSelect: document.getElementById("group-admin-blacklist-select"),
+  saveGroupPolicy: document.getElementById("save-group-policy"),
   savePluginConfig: document.getElementById("save-plugin-config"),
   emptyState: document.getElementById("empty-state"),
   editor: document.getElementById("editor"),
@@ -110,6 +109,9 @@ function selectedPayload() {
     custom_identity_fields: state.customIdentityFields,
     usage_rules: state.usageRules,
     injection_enabled: state.injectionEnabled,
+    admin_command_whitelist: state.adminCommandWhitelist,
+    admin_command_blacklist: state.adminCommandBlacklist,
+    allow_members_admin_commands: state.allowMemberAdminCommands,
     revision: state.profileRevision,
   };
 }
@@ -198,17 +200,7 @@ function applyPluginConfig(config) {
   const avatarPreviewChanged = state.avatarPreviewEnabled !== avatarPreviewEnabled;
   state.avatarPreviewEnabled = avatarPreviewEnabled;
   elements.configAvatarPreview.checked = avatarPreviewEnabled;
-  state.adminCommandWhitelist = Array.isArray(config?.admin_command_whitelist)
-    ? config.admin_command_whitelist.map(String).filter((item) => /^\d+$/.test(item))
-    : [];
-  state.adminCommandBlacklist = Array.isArray(config?.admin_command_blacklist)
-    ? config.admin_command_blacklist.map(String).filter((item) => /^\d+$/.test(item))
-    : [];
-  state.allowMemberAdminCommands = config?.allow_members_admin_commands === true;
-  elements.configAllowMemberAdmin.checked = state.allowMemberAdminCommands;
   state.configDirty = false;
-  renderAdminCommandLists();
-  renderGroupAdminCandidates();
   if (avatarPreviewChanged) {
     state.avatarCheckGeneration += 1;
     state.avatarCheckedIds.clear();
@@ -216,7 +208,15 @@ function applyPluginConfig(config) {
   }
 }
 
-function renderQQConfigList(container, values, removeValue) {
+function memberLabel(userId) {
+  const member = state.members.find((item) => String(item.user_id) === String(userId));
+  if (!member) return `QQ ${userId}`;
+  const roleLabels = { owner: "群主", admin: "管理员", member: "成员" };
+  const name = member.card || member.nickname || member.user_id;
+  return `${name} · ${member.user_id} · ${roleLabels[member.role] || "成员"}`;
+}
+
+function renderQQPolicyList(container, values, removeValue) {
   container.replaceChildren();
   if (!values.length) {
     container.appendChild(createTextElement("span", "muted", "未设置"));
@@ -225,7 +225,7 @@ function renderQQConfigList(container, values, removeValue) {
   for (const userId of values) {
     const chip = document.createElement("span");
     chip.className = "term-chip";
-    chip.appendChild(createTextElement("span", "", userId));
+    chip.appendChild(createTextElement("span", "", memberLabel(userId)));
     const remove = createTextElement("button", "chip-remove", "×");
     remove.type = "button";
     remove.setAttribute("aria-label", `移除 QQ ${userId}`);
@@ -236,89 +236,80 @@ function renderQQConfigList(container, values, removeValue) {
 }
 
 function renderAdminCommandLists() {
-  renderQQConfigList(
-    elements.configAdminWhitelist,
+  renderQQPolicyList(
+    elements.groupAdminWhitelist,
     state.adminCommandWhitelist,
     (userId) => {
       state.adminCommandWhitelist = state.adminCommandWhitelist.filter((item) => item !== userId);
-      markConfigDirty();
+      markProfileDirty();
       renderAdminCommandLists();
-      renderGroupAdminCandidates();
+      populateAdminPolicySelects();
     },
   );
-  renderQQConfigList(
-    elements.configAdminBlacklist,
+  renderQQPolicyList(
+    elements.groupAdminBlacklist,
     state.adminCommandBlacklist,
     (userId) => {
       state.adminCommandBlacklist = state.adminCommandBlacklist.filter((item) => item !== userId);
-      markConfigDirty();
+      markProfileDirty();
       renderAdminCommandLists();
-      renderGroupAdminCandidates();
+      populateAdminPolicySelects();
     },
   );
 }
 
-function addQQToConfigList(listName, input) {
-  const userId = input.value.trim();
-  if (!/^\d+$/.test(userId)) {
-    showNotice("请输入有效的 QQ 号。", "warning");
-    return;
-  }
-  const values = state[listName];
-  if (!values.includes(userId)) {
-    values.push(userId);
-    markConfigDirty();
-  }
-  input.value = "";
-  renderAdminCommandLists();
-  renderGroupAdminCandidates();
+function sortedPolicyMembers() {
+  const roleRank = { owner: 0, admin: 1, member: 2 };
+  return [...state.members].sort((left, right) => {
+    const rank = (roleRank[left.role] ?? 3) - (roleRank[right.role] ?? 3);
+    if (rank) return rank;
+    return memberLabel(left.user_id).localeCompare(memberLabel(right.user_id), "zh-CN");
+  });
 }
 
-function renderGroupAdminCandidates() {
-  elements.groupAdminCandidates.replaceChildren();
-  const candidates = state.members.filter((member) => ["owner", "admin"].includes(member.role));
-  if (!state.selectedGroup || !candidates.length) {
-    elements.groupAdminCandidates.textContent = state.selectedGroup
-      ? "当前成员信息中没有管理员候选。"
-      : "选择群并刷新成员后显示。";
-    return;
+function populatePolicySelect(select, excludedIds) {
+  select.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = state.members.length ? "点击选择群成员…" : "暂无群成员";
+  select.appendChild(placeholder);
+  for (const member of sortedPolicyMembers()) {
+    const userId = String(member.user_id);
+    if (excludedIds.includes(userId)) continue;
+    const option = document.createElement("option");
+    option.value = userId;
+    option.textContent = memberLabel(userId);
+    select.appendChild(option);
   }
-  for (const member of candidates) {
-    const row = document.createElement("div");
-    row.className = "admin-candidate";
-    row.appendChild(createTextElement(
-      "span",
-      "admin-candidate-name",
-      `${member.card || member.nickname || member.user_id} · ${member.user_id}`,
-    ));
-    const actions = document.createElement("span");
-    actions.className = "admin-candidate-actions";
-    const addWhite = createTextElement("button", "button button-small button-secondary", "加白名单");
-    addWhite.type = "button";
-    addWhite.disabled = state.adminCommandWhitelist.includes(String(member.user_id));
-    addWhite.addEventListener("click", () => {
-      if (!state.adminCommandWhitelist.includes(String(member.user_id))) {
-        state.adminCommandWhitelist.push(String(member.user_id));
-        markConfigDirty();
-      }
-      renderAdminCommandLists();
-      renderGroupAdminCandidates();
-    });
-    const addBlack = createTextElement("button", "button button-small button-secondary", "加黑名单");
-    addBlack.type = "button";
-    addBlack.disabled = state.adminCommandBlacklist.includes(String(member.user_id));
-    addBlack.addEventListener("click", () => {
-      if (!state.adminCommandBlacklist.includes(String(member.user_id))) {
-        state.adminCommandBlacklist.push(String(member.user_id));
-        markConfigDirty();
-      }
-      renderAdminCommandLists();
-      renderGroupAdminCandidates();
-    });
-    actions.append(addWhite, addBlack);
-    row.appendChild(actions);
-    elements.groupAdminCandidates.appendChild(row);
-  }
+}
+
+function populateAdminPolicySelects() {
+  populatePolicySelect(elements.groupAdminWhitelistSelect, state.adminCommandWhitelist);
+  populatePolicySelect(elements.groupAdminBlacklistSelect, state.adminCommandBlacklist);
+}
+
+function addMemberToPolicy(listName, select, otherListName) {
+  const userId = String(select.value || "");
+  if (!userId) return;
+  state[otherListName] = state[otherListName].filter((item) => item !== userId);
+  if (!state[listName].includes(userId)) state[listName].push(userId);
+  select.value = "";
+  markProfileDirty();
+  renderAdminCommandLists();
+  populateAdminPolicySelects();
+}
+
+function applyGroupPolicy(profile) {
+  state.adminCommandWhitelist = Array.isArray(profile?.admin_command_whitelist)
+    ? profile.admin_command_whitelist.map(String).filter((item) => /^\d+$/.test(item))
+    : [];
+  state.adminCommandBlacklist = Array.isArray(profile?.admin_command_blacklist)
+    ? profile.admin_command_blacklist.map(String).filter((item) => /^\d+$/.test(item))
+    : [];
+  state.allowMemberAdminCommands = profile?.allow_members_admin_commands === true;
+  elements.groupAllowMemberAdmin.checked = state.allowMemberAdminCommands;
+  renderAdminCommandLists();
+  populateAdminPolicySelects();
 }
 
 async function loadPluginConfig({ force = false } = {}) {
@@ -345,9 +336,6 @@ async function savePluginConfig() {
       message_window_size: messageWindowSize,
       log_detail: elements.configLogDetail.value,
       avatar_preview_enabled: elements.configAvatarPreview.checked,
-      admin_command_whitelist: state.adminCommandWhitelist,
-      admin_command_blacklist: state.adminCommandBlacklist,
-      allow_members_admin_commands: elements.configAllowMemberAdmin.checked,
     });
     applyPluginConfig(result);
     showNotice("插件配置已保存，页面展示与新的 LLM 请求会使用最新设置。", "success");
@@ -934,9 +922,9 @@ async function refreshMembers({ quiet = false } = {}) {
     state.profileRevision = Number(result.revision) || 0;
     state.profileDirty = false;
     applyGroupInjectionState(result.injection_enabled !== false);
+    applyGroupPolicy(result);
     elements.usageRules.value = state.usageRules;
     renderCustomIdentityFields();
-    renderGroupAdminCandidates();
     if (result.group_name) state.selectedGroup.group_name = result.group_name;
     elements.selectedGroupName.textContent = state.selectedGroup.group_name || `群 ${state.selectedGroup.group_id}`;
     renderMembers({ forceAvatarCheck: state.avatarPreviewEnabled });
@@ -998,6 +986,7 @@ async function saveProfile() {
   const payload = selectedPayload();
   if (!payload) return;
   elements.saveProfile.disabled = true;
+  elements.saveGroupPolicy.disabled = true;
   try {
     const result = await bridge.apiPost("profiles", payload);
     elements.promptOutput.textContent =
@@ -1017,11 +1006,15 @@ async function saveProfile() {
     state.profileRevision = Number(result.revision) || state.profileRevision;
     state.profileDirty = false;
     applyGroupInjectionState(result.injection_enabled !== false);
+    applyGroupPolicy(result);
     const selected = state.groups.find((group) => group.session_key === state.selectedGroup.session_key);
     if (selected) {
       selected.has_profile = Boolean(
         state.usageRules.trim() !== state.defaultUsageRules.trim()
-        || state.members.some((member) => hasConfiguredIdentity(member)),
+        || state.members.some((member) => hasConfiguredIdentity(member))
+        || state.adminCommandWhitelist.length
+        || state.adminCommandBlacklist.length
+        || state.allowMemberAdminCommands
       );
       selected.member_count = state.members.length;
       selected.revision = state.profileRevision;
@@ -1037,6 +1030,7 @@ async function saveProfile() {
     showNotice(error.message || "保存设定失败。", "error");
   } finally {
     elements.saveProfile.disabled = false;
+    elements.saveGroupPolicy.disabled = false;
   }
 }
 
@@ -1078,6 +1072,7 @@ async function performResetProfile() {
     state.profileRevision = Number(result.revision) || state.profileRevision;
     state.profileDirty = false;
     applyGroupInjectionState(result.injection_enabled !== false);
+    applyGroupPolicy(result);
     state.memberSearch = "";
     state.memberPage = 1;
     state.showConfiguredOnly = false;
@@ -1094,7 +1089,11 @@ async function performResetProfile() {
       (group) => group.session_key === state.selectedGroup.session_key,
     );
     if (selected) {
-      selected.has_profile = false;
+      selected.has_profile = Boolean(
+        state.adminCommandWhitelist.length
+        || state.adminCommandBlacklist.length
+        || state.allowMemberAdminCommands
+      );
       selected.member_count = state.members.length;
       selected.revision = state.profileRevision;
       selected.injection_enabled = state.injectionEnabled;
@@ -1122,6 +1121,10 @@ function selectGroup() {
   state.showConfiguredOnly = false;
   state.profileRevision = Number(selected?.revision) || 0;
   state.profileDirty = false;
+  state.adminCommandWhitelist = [];
+  state.adminCommandBlacklist = [];
+  state.allowMemberAdminCommands = false;
+  applyGroupPolicy({});
   applyGroupInjectionState(selected?.injection_enabled !== false);
   state.avatarCheckGeneration += 1;
   state.avatarCheckedIds.clear();
@@ -1130,7 +1133,7 @@ function selectGroup() {
   elements.memberRefreshTime.textContent = "最近读取：尚未读取";
   updateConfiguredFilter();
   elements.promptOutput.textContent = "保存或预览后显示。";
-  renderGroupAdminCandidates();
+  elements.groupPolicyPanel.classList.toggle("hidden", !selected);
   if (!selected) {
     setEditorVisible(false);
     return;
@@ -1151,26 +1154,26 @@ async function init() {
     elements.configMessageWindowSize,
     elements.configLogDetail,
     elements.configAvatarPreview,
-    elements.configAllowMemberAdmin,
   ]) {
     control.addEventListener("input", markConfigDirty);
   }
-  elements.configAdminWhitelistAdd.addEventListener("click", () =>
-    addQQToConfigList("adminCommandWhitelist", elements.configAdminWhitelistInput));
-  elements.configAdminBlacklistAdd.addEventListener("click", () =>
-    addQQToConfigList("adminCommandBlacklist", elements.configAdminBlacklistInput));
-  elements.configAdminWhitelistInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      addQQToConfigList("adminCommandWhitelist", elements.configAdminWhitelistInput);
-    }
+  elements.groupAllowMemberAdmin.addEventListener("change", () => {
+    state.allowMemberAdminCommands = elements.groupAllowMemberAdmin.checked;
+    markProfileDirty();
   });
-  elements.configAdminBlacklistInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      addQQToConfigList("adminCommandBlacklist", elements.configAdminBlacklistInput);
-    }
-  });
+  elements.groupAdminWhitelistSelect.addEventListener("change", () =>
+    addMemberToPolicy(
+      "adminCommandWhitelist",
+      elements.groupAdminWhitelistSelect,
+      "adminCommandBlacklist",
+    ));
+  elements.groupAdminBlacklistSelect.addEventListener("change", () =>
+    addMemberToPolicy(
+      "adminCommandBlacklist",
+      elements.groupAdminBlacklistSelect,
+      "adminCommandWhitelist",
+    ));
+  elements.saveGroupPolicy.addEventListener("click", saveProfile);
   elements.refreshMembers.addEventListener("click", refreshMembers);
   elements.resetProfile.addEventListener("click", openResetConfirmation);
   elements.cancelReset.addEventListener("click", () => closeResetConfirmation());

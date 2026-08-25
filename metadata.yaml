@@ -2,7 +2,7 @@ name: astrbot_plugin_group_member_context
 display_name: 群成员身份上下文
 desc: 让AI认出群友：自动把最近聊天中出现/提到的成员，与其真名、外号、昵称对应起来，动态注入到大模型上下文中。
 short_desc: 让大模型认出群友：自动把最近聊天中出现的成员，与其真名、外号、昵称对应起来。
-version: 1.1.0
+version: 1.2.0
 author: Maxuix
 repo: https://github.com/Maxuix/astrbot_plugin_group_member_context
 social_link: https://github.com/Maxuix

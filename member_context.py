@@ -19,7 +19,7 @@ LOG_DETAIL_FULL = "full"
 DEFAULT_MESSAGE_WINDOW_SIZE = 20
 MIN_MESSAGE_WINDOW_SIZE = 1
 MAX_MESSAGE_WINDOW_SIZE = 200
-STORE_VERSION = 6
+STORE_VERSION = 7
 
 DEFAULT_USAGE_RULES = "\n".join(
     [
@@ -136,6 +136,21 @@ def normalize_id(value: object) -> str:
     if not identifier.isdigit() or len(identifier) > 32:
         return ""
     return identifier
+
+
+def normalize_qq_id_list(value: object) -> list[str]:
+    """Normalize a deduplicated list of QQ identifiers."""
+
+    if isinstance(value, (str, int)):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        user_id = normalize_id(item)
+        if user_id and user_id not in result:
+            result.append(user_id)
+    return result
 
 
 def normalize_match_text(value: object) -> str:
@@ -286,6 +301,7 @@ def normalize_store(raw: object) -> dict[str, Any]:
 
     store: dict[str, Any] = {
         "version": STORE_VERSION,
+        "admin_policy_migrated": False,
         "sessions": {},
     }
     if not isinstance(raw, Mapping):
@@ -293,6 +309,10 @@ def normalize_store(raw: object) -> dict[str, Any]:
 
     legacy_custom_identity_fields = normalize_custom_identity_fields(
         raw.get("custom_identity_fields", [])
+    )
+    store["admin_policy_migrated"] = normalize_enabled(
+        raw.get("admin_policy_migrated"),
+        default=False,
     )
 
     raw_sessions = raw.get("sessions", {})
@@ -335,6 +355,16 @@ def normalize_store(raw: object) -> dict[str, Any]:
             "injection_enabled": normalize_enabled(
                 raw_profile.get("injection_enabled"),
                 default=True,
+            ),
+            "admin_command_whitelist": normalize_qq_id_list(
+                raw_profile.get("admin_command_whitelist", [])
+            ),
+            "admin_command_blacklist": normalize_qq_id_list(
+                raw_profile.get("admin_command_blacklist", [])
+            ),
+            "allow_members_admin_commands": normalize_enabled(
+                raw_profile.get("allow_members_admin_commands"),
+                default=False,
             ),
             "revision": normalize_revision(raw_profile.get("revision")),
             "message_window_size": normalize_message_window_size(

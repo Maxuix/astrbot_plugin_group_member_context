@@ -299,6 +299,8 @@ def test_store_keeps_profiles_isolated_by_platform_and_group():
                     "group_id": "123",
                     "custom_identity_fields": ["游戏名"],
                     "members": [{"user_id": "1", "aliases": ["A"]}],
+                    "admin_command_whitelist": ["1", "1", "invalid"],
+                    "allow_members_admin_commands": True,
                 },
                 "bot-b:GroupMessage:123": {
                     "platform_id": "bot-b",
@@ -321,3 +323,15 @@ def test_store_keeps_profiles_isolated_by_platform_and_group():
     assert store["sessions"]["bot-b:GroupMessage:123"]["custom_identity_fields"] == [
         "部门"
     ]
+    assert store["sessions"]["bot-a:GroupMessage:123"]["admin_command_whitelist"] == [
+        "1"
+    ]
+    assert (
+        store["sessions"]["bot-a:GroupMessage:123"]["allow_members_admin_commands"]
+        is True
+    )
+    assert store["sessions"]["bot-b:GroupMessage:123"]["admin_command_whitelist"] == []
+    assert (
+        store["sessions"]["bot-b:GroupMessage:123"]["allow_members_admin_commands"]
+        is False
+    )
