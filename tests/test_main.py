@@ -172,6 +172,7 @@ def test_identity_card_template_renders_field_values():
     )
     assert "游戏名" in html
     assert "Tony" in html
+    assert "身份信息" in html
     assert "data:image/png;base64,YQ==" in html
 
 
@@ -191,14 +192,19 @@ def test_rendered_card_crop_removes_default_viewport_whitespace(tmp_path):
         assert cropped.size == (760, 377)
 
 
-def test_help_card_separates_command_formats_from_examples():
-    html = Template(plugin_module.HELP_CARD_TEMPLATE).render()
+def test_pre_rendered_help_card_is_high_resolution_png():
+    with Image.open(plugin_module.HELP_CARD_IMAGE_PATH) as image:
+        assert image.format == "PNG"
+        assert image.size == (2080, 2120)
 
-    assert "普通成员命令" in html
-    assert "管理员命令" in html
-    assert "使用示例" in html
-    assert "/群身份 add &lt;@群成员/QQ号&gt;" in html
-    assert "/群身份 add @小明 游戏名=Tony Stark" in html
+
+def test_identity_argument_uses_first_equals_and_keeps_spaced_default_identity():
+    parse = plugin_module.Main._parse_identity_expression
+
+    assert parse("Tony Stark") == ("昵称", "Tony Stark")
+    assert parse("游戏名=Tony Stark") == ("游戏名", "Tony Stark")
+    assert parse("备注=Alpha=Beta") == ("备注", "Alpha=Beta")
+    assert parse("游戏名＝Tony Stark") == ("游戏名", "Tony Stark")
 
 
 def test_tag_commands_are_registered_under_group_identity():
@@ -1077,19 +1083,19 @@ async def test_list_command_renders_webui_style_identity_card_without_note():
     assert render_data["display_name"] == "A同学"
     assert render_data["avatar_data_url"] == "data:image/png;base64,YQ=="
     assert plugin.html_render.await_args.kwargs["return_url"] is False
+    assert plugin.html_render.await_args.kwargs["options"]["scale"] == "device"
 
 
 @pytest.mark.asyncio
-async def test_help_command_renders_image_card():
+async def test_help_command_sends_pre_rendered_image_without_rendering():
     plugin = plugin_module.Main(FakeContext())
-    plugin.html_render = AsyncMock(return_value="help-card.png")
+    plugin.html_render = AsyncMock()
 
     results = await collect_results(plugin.group_identity_help(FakeEvent("1001")))
 
     assert results[0].kind == "image"
-    assert results[0].image == "help-card.png"
-    assert plugin.html_render.await_args.args[0] == plugin_module.HELP_CARD_TEMPLATE
-    assert plugin.html_render.await_args.kwargs["return_url"] is False
+    assert results[0].image == str(plugin_module.HELP_CARD_IMAGE_PATH)
+    plugin.html_render.assert_not_awaited()
 
 
 @pytest.mark.asyncio

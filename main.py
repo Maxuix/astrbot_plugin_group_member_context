@@ -28,7 +28,7 @@ from astrbot.api.web import error_response, json_response, request
 from astrbot.core.agent.message import TextPart
 from astrbot.core.star.filter.command import GreedyStr
 
-from .identity_card import HELP_CARD_TEMPLATE, IDENTITY_CARD_TEMPLATE
+from .identity_card import IDENTITY_CARD_TEMPLATE
 
 from .member_context import (
     DEFAULT_MESSAGE_WINDOW_SIZE,
@@ -77,6 +77,9 @@ MAX_IDENTITY_CARD_AVATAR_BYTES = 2 * 1024 * 1024
 ADMIN_COMMAND_WHITELIST_KEY = "admin_command_whitelist"
 ADMIN_COMMAND_BLACKLIST_KEY = "admin_command_blacklist"
 ALLOW_MEMBER_ADMIN_COMMANDS_KEY = "allow_members_admin_commands"
+HELP_CARD_IMAGE_PATH = (
+    Path(__file__).resolve().parent / "assets" / "group_identity_help.png"
+)
 WRITABLE_STANDARD_IDENTITY_FIELDS = {
     "昵称": "nicknames",
     "外号": "aliases",
@@ -2072,10 +2075,14 @@ class Main(Star):
                     "type": "png",
                     "full_page": True,
                     "animations": "disabled",
-                    "scale": "css",
+                    "scale": "device",
                 },
             )
-            image = await asyncio.to_thread(self._crop_rendered_card_image, image)
+            image = await asyncio.to_thread(
+                self._crop_rendered_card_image,
+                image,
+                12,
+            )
             yield event.image_result(image)
         except ValueError as exc:
             yield event.plain_result(f"失败：{exc}")
@@ -2149,25 +2156,13 @@ class Main(Star):
 
     @group_identity.command("help", alias={"帮助"})
     async def group_identity_help(self, event: AstrMessageEvent):
-        """以图片显示群身份指令格式和示例。"""
+        """发送预渲染的群身份指令帮助图片。"""
 
-        try:
-            image = await self.html_render(
-                HELP_CARD_TEMPLATE,
-                {},
-                return_url=False,
-                options={
-                    "type": "png",
-                    "full_page": True,
-                    "animations": "disabled",
-                    "scale": "css",
-                },
-            )
-            image = await asyncio.to_thread(self._crop_rendered_card_image, image)
-            yield event.image_result(image)
-        except Exception:
-            self.logger.exception("群身份 help 指令执行失败。")
-            yield event.plain_result("失败：帮助图片生成失败。")
+        if not HELP_CARD_IMAGE_PATH.is_file():
+            self.logger.error("群身份帮助图片不存在 path=%s", HELP_CARD_IMAGE_PATH)
+            yield event.plain_result("失败：帮助图片不存在，请联系插件管理员。")
+            return
+        yield event.image_result(str(HELP_CARD_IMAGE_PATH))
 
     @filter.on_llm_request()
     async def inject_member_context(
