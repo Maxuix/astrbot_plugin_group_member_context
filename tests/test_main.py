@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from astrbot_plugin_group_member_context import main as plugin_module
 from jinja2 import Template
+from PIL import Image, ImageDraw
 
 from astrbot.api.message_components import At, Plain
 from astrbot.api.platform import MessageType
@@ -172,6 +173,22 @@ def test_identity_card_template_renders_field_values():
     assert "游戏名" in html
     assert "Tony" in html
     assert "data:image/png;base64,YQ==" in html
+
+
+def test_rendered_card_crop_removes_default_viewport_whitespace(tmp_path):
+    source = tmp_path / "rendered.png"
+    rendered = Image.new("RGB", (760, 720), (239, 239, 232))
+    draw = ImageDraw.Draw(rendered)
+    draw.rectangle((30, 30, 729, 346), fill=(248, 248, 242))
+    rendered.save(source)
+    plugin = plugin_module.Main(FakeContext())
+
+    cropped_path = plugin._crop_rendered_card_image(str(source))
+
+    assert cropped_path.endswith("_cropped.png")
+    assert not source.exists()
+    with Image.open(cropped_path) as cropped:
+        assert cropped.size == (760, 377)
 
 
 def test_help_card_separates_command_formats_from_examples():
@@ -1059,6 +1076,7 @@ async def test_list_command_renders_webui_style_identity_card_without_note():
     assert "group_name" not in render_data
     assert render_data["display_name"] == "A同学"
     assert render_data["avatar_data_url"] == "data:image/png;base64,YQ=="
+    assert plugin.html_render.await_args.kwargs["return_url"] is False
 
 
 @pytest.mark.asyncio
@@ -1071,6 +1089,7 @@ async def test_help_command_renders_image_card():
     assert results[0].kind == "image"
     assert results[0].image == "help-card.png"
     assert plugin.html_render.await_args.args[0] == plugin_module.HELP_CARD_TEMPLATE
+    assert plugin.html_render.await_args.kwargs["return_url"] is False
 
 
 @pytest.mark.asyncio

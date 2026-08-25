@@ -39,9 +39,11 @@ const elements = {
   groupPolicyPanel: document.getElementById("group-policy-panel"),
   groupAllowMemberAdmin: document.getElementById("group-allow-member-admin"),
   groupAdminWhitelist: document.getElementById("group-admin-whitelist"),
-  groupAdminWhitelistSelect: document.getElementById("group-admin-whitelist-select"),
+  groupAdminWhitelistSearch: document.getElementById("group-admin-whitelist-search"),
+  groupAdminWhitelistOptions: document.getElementById("group-admin-whitelist-options"),
   groupAdminBlacklist: document.getElementById("group-admin-blacklist"),
-  groupAdminBlacklistSelect: document.getElementById("group-admin-blacklist-select"),
+  groupAdminBlacklistSearch: document.getElementById("group-admin-blacklist-search"),
+  groupAdminBlacklistOptions: document.getElementById("group-admin-blacklist-options"),
   saveGroupPolicy: document.getElementById("save-group-policy"),
   savePluginConfig: document.getElementById("save-plugin-config"),
   emptyState: document.getElementById("empty-state"),
@@ -243,7 +245,7 @@ function renderAdminCommandLists() {
       state.adminCommandWhitelist = state.adminCommandWhitelist.filter((item) => item !== userId);
       markProfileDirty();
       renderAdminCommandLists();
-      populateAdminPolicySelects();
+      populateAdminPolicyPickers();
     },
   );
   renderQQPolicyList(
@@ -253,7 +255,7 @@ function renderAdminCommandLists() {
       state.adminCommandBlacklist = state.adminCommandBlacklist.filter((item) => item !== userId);
       markProfileDirty();
       renderAdminCommandLists();
-      populateAdminPolicySelects();
+      populateAdminPolicyPickers();
     },
   );
 }
@@ -267,36 +269,92 @@ function sortedPolicyMembers() {
   });
 }
 
-function populatePolicySelect(select, excludedIds) {
-  select.replaceChildren();
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = state.members.length ? "点击选择群成员…" : "暂无群成员";
-  select.appendChild(placeholder);
-  for (const member of sortedPolicyMembers()) {
-    const userId = String(member.user_id);
-    if (excludedIds.includes(userId)) continue;
-    const option = document.createElement("option");
-    option.value = userId;
-    option.textContent = memberLabel(userId);
-    select.appendChild(option);
+function memberMatchesPolicySearch(member, query) {
+  if (!query) return true;
+  return [member.user_id, member.card, member.nickname].some((value) =>
+    normalizedSearchValue(value).includes(query));
+}
+
+function policyPickerConfigs() {
+  return [
+    {
+      input: elements.groupAdminWhitelistSearch,
+      options: elements.groupAdminWhitelistOptions,
+      listName: "adminCommandWhitelist",
+      otherListName: "adminCommandBlacklist",
+    },
+    {
+      input: elements.groupAdminBlacklistSearch,
+      options: elements.groupAdminBlacklistOptions,
+      listName: "adminCommandBlacklist",
+      otherListName: "adminCommandWhitelist",
+    },
+  ];
+}
+
+function closeAdminPolicyPickers() {
+  for (const { input, options } of policyPickerConfigs()) {
+    options.classList.add("hidden");
+    input.setAttribute("aria-expanded", "false");
   }
 }
 
-function populateAdminPolicySelects() {
-  populatePolicySelect(elements.groupAdminWhitelistSelect, state.adminCommandWhitelist);
-  populatePolicySelect(elements.groupAdminBlacklistSelect, state.adminCommandBlacklist);
+function renderPolicyPicker(config, open = false) {
+  const { input, options, listName, otherListName } = config;
+  options.replaceChildren();
+  const query = normalizedSearchValue(input.value);
+  const matches = sortedPolicyMembers().filter((member) => {
+    const userId = String(member.user_id);
+    return !state[listName].includes(userId) && memberMatchesPolicySearch(member, query);
+  });
+  if (!matches.length) {
+    options.appendChild(createTextElement(
+      "p",
+      "member-picker-empty",
+      state.members.length ? "没有匹配的可选成员。" : "暂无群成员。",
+    ));
+  }
+  for (const member of matches) {
+    const userId = String(member.user_id);
+    const option = document.createElement("button");
+    option.className = "member-picker-option";
+    option.type = "button";
+    option.setAttribute("role", "option");
+    option.appendChild(createTextElement(
+      "span",
+      "member-picker-name",
+      member.card || member.nickname || userId,
+    ));
+    const details = [
+      `QQ ${userId}`,
+      member.card ? `群备注 ${member.card}` : "",
+      member.nickname ? `平台昵称 ${member.nickname}` : "",
+    ].filter(Boolean).join(" · ");
+    option.appendChild(createTextElement("span", "member-picker-meta", details));
+    option.addEventListener("click", () => {
+      addMemberToPolicy(listName, userId, otherListName);
+      input.value = "";
+      closeAdminPolicyPickers();
+    });
+    options.appendChild(option);
+  }
+  options.classList.toggle("hidden", !open);
+  input.setAttribute("aria-expanded", String(open));
 }
 
-function addMemberToPolicy(listName, select, otherListName) {
-  const userId = String(select.value || "");
+function populateAdminPolicyPickers(openInput = null) {
+  for (const config of policyPickerConfigs()) {
+    renderPolicyPicker(config, config.input === openInput);
+  }
+}
+
+function addMemberToPolicy(listName, userId, otherListName) {
   if (!userId) return;
   state[otherListName] = state[otherListName].filter((item) => item !== userId);
   if (!state[listName].includes(userId)) state[listName].push(userId);
-  select.value = "";
   markProfileDirty();
   renderAdminCommandLists();
-  populateAdminPolicySelects();
+  populateAdminPolicyPickers();
 }
 
 function applyGroupPolicy(profile) {
@@ -309,7 +367,7 @@ function applyGroupPolicy(profile) {
   state.allowMemberAdminCommands = profile?.allow_members_admin_commands === true;
   elements.groupAllowMemberAdmin.checked = state.allowMemberAdminCommands;
   renderAdminCommandLists();
-  populateAdminPolicySelects();
+  populateAdminPolicyPickers();
 }
 
 async function loadPluginConfig({ force = false } = {}) {
@@ -1124,6 +1182,9 @@ function selectGroup() {
   state.adminCommandWhitelist = [];
   state.adminCommandBlacklist = [];
   state.allowMemberAdminCommands = false;
+  elements.groupAdminWhitelistSearch.value = "";
+  elements.groupAdminBlacklistSearch.value = "";
+  closeAdminPolicyPickers();
   applyGroupPolicy({});
   applyGroupInjectionState(selected?.injection_enabled !== false);
   state.avatarCheckGeneration += 1;
@@ -1161,18 +1222,17 @@ async function init() {
     state.allowMemberAdminCommands = elements.groupAllowMemberAdmin.checked;
     markProfileDirty();
   });
-  elements.groupAdminWhitelistSelect.addEventListener("change", () =>
-    addMemberToPolicy(
-      "adminCommandWhitelist",
-      elements.groupAdminWhitelistSelect,
-      "adminCommandBlacklist",
-    ));
-  elements.groupAdminBlacklistSelect.addEventListener("change", () =>
-    addMemberToPolicy(
-      "adminCommandBlacklist",
-      elements.groupAdminBlacklistSelect,
-      "adminCommandWhitelist",
-    ));
+  for (const config of policyPickerConfigs()) {
+    const openPicker = () => populateAdminPolicyPickers(config.input);
+    config.input.addEventListener("focus", openPicker);
+    config.input.addEventListener("click", openPicker);
+    config.input.addEventListener("input", openPicker);
+  }
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element) || !event.target.closest(".member-picker")) {
+      closeAdminPolicyPickers();
+    }
+  });
   elements.saveGroupPolicy.addEventListener("click", saveProfile);
   elements.refreshMembers.addEventListener("click", refreshMembers);
   elements.resetProfile.addEventListener("click", openResetConfirmation);
@@ -1182,9 +1242,9 @@ async function init() {
     if (event.target === elements.resetConfirmation) closeResetConfirmation();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !elements.resetConfirmation.classList.contains("hidden")) {
-      closeResetConfirmation();
-    }
+    if (event.key !== "Escape") return;
+    closeAdminPolicyPickers();
+    if (!elements.resetConfirmation.classList.contains("hidden")) closeResetConfirmation();
   });
   elements.previewPrompt.addEventListener("click", previewPrompt);
   elements.saveProfile.addEventListener("click", saveProfile);

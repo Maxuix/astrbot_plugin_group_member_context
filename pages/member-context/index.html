@@ -119,21 +119,39 @@
             </div>
 
             <div class="config-field command-access-field">
-              <label class="field-label" for="group-admin-whitelist-select">管理员指令白名单</label>
+              <label class="field-label" for="group-admin-whitelist-search">管理员指令白名单</label>
               <div id="group-admin-whitelist" class="term-list command-access-list"></div>
-              <select id="group-admin-whitelist-select" class="select-input">
-                <option value="">点击选择群成员…</option>
-              </select>
-              <p class="help-text">非空时只有白名单成员可用，且黑名单不生效。</p>
+              <div class="member-picker">
+                <input
+                  id="group-admin-whitelist-search"
+                  class="text-input"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="搜索并选择群成员…"
+                  aria-controls="group-admin-whitelist-options"
+                  aria-expanded="false"
+                />
+                <div id="group-admin-whitelist-options" class="member-picker-options hidden" role="listbox"></div>
+              </div>
+              <p class="help-text">支持按 QQ 号（平台用户 ID）、群备注/群名片和平台昵称搜索；非空时黑名单不生效。</p>
             </div>
 
             <div class="config-field command-access-field">
-              <label class="field-label" for="group-admin-blacklist-select">管理员指令黑名单</label>
+              <label class="field-label" for="group-admin-blacklist-search">管理员指令黑名单</label>
               <div id="group-admin-blacklist" class="term-list command-access-list"></div>
-              <select id="group-admin-blacklist-select" class="select-input">
-                <option value="">点击选择群成员…</option>
-              </select>
-              <p class="help-text">仅在白名单留空时生效；同一成员不会同时出现在两边。</p>
+              <div class="member-picker">
+                <input
+                  id="group-admin-blacklist-search"
+                  class="text-input"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="搜索并选择群成员…"
+                  aria-controls="group-admin-blacklist-options"
+                  aria-expanded="false"
+                />
+                <div id="group-admin-blacklist-options" class="member-picker-options hidden" role="listbox"></div>
+              </div>
+              <p class="help-text">支持按 QQ 号（平台用户 ID）、群备注/群名片和平台昵称搜索；仅在白名单留空时生效。</p>
             </div>
 
             <div class="config-save-bar">

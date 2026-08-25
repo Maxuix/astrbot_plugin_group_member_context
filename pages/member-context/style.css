@@ -413,8 +413,62 @@ h3 {
   margin-top: 8px;
 }
 
-.command-access-list + .select-input {
+.member-picker {
+  position: relative;
   margin-top: 8px;
+}
+
+.member-picker-options {
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-top: 0;
+  background: var(--panel);
+  box-shadow: 4px 4px 0 var(--line);
+}
+
+.member-picker-option {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.member-picker-option:last-child {
+  border-bottom: 0;
+}
+
+.member-picker-option:hover,
+.member-picker-option:focus-visible {
+  background: var(--yellow);
+  outline: 0;
+}
+
+.member-picker-name {
+  font-weight: 800;
+}
+
+.member-picker-meta {
+  color: var(--muted);
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.member-picker-option:hover .member-picker-meta,
+.member-picker-option:focus-visible .member-picker-meta {
+  color: var(--text-on-accent);
+}
+
+.member-picker-empty {
+  margin: 0;
+  padding: 12px 10px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .config-shared-help {

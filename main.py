@@ -12,9 +12,11 @@ import re
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import aiohttp
+from PIL import Image, ImageChops
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
@@ -1875,6 +1877,36 @@ class Main(Star):
         encoded = base64.b64encode(body).decode("ascii")
         return f"data:{content_type};base64,{encoded}"
 
+    def _crop_rendered_card_image(self, image_path: str, padding: int = 30) -> str:
+        """裁掉 Playwright 默认视口产生的空白，并保留模板外边距。"""
+
+        source = Path(str(image_path))
+        if not source.is_file():
+            return image_path
+        try:
+            with Image.open(source) as rendered:
+                rendered.load()
+                rgb = rendered.convert("RGB")
+                background = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+                content_box = ImageChops.difference(rgb, background).getbbox()
+                if content_box is None:
+                    return image_path
+                left = max(0, content_box[0] - padding)
+                top = max(0, content_box[1] - padding)
+                right = min(rendered.width, content_box[2] + padding)
+                bottom = min(rendered.height, content_box[3] + padding)
+                crop_box = (left, top, right, bottom)
+                if crop_box == (0, 0, rendered.width, rendered.height):
+                    return image_path
+                cropped = rendered.crop(crop_box)
+                output = source.with_name(f"{source.stem}_cropped.png")
+                cropped.save(output, format="PNG", optimize=True)
+            source.unlink(missing_ok=True)
+            return str(output)
+        except Exception as exc:
+            self.logger.warning("裁剪群身份图片空白失败 path=%s: %s", source, exc)
+            return image_path
+
     @filter.command_group("群身份")
     def group_identity(self):
         """管理当前 QQ 群的成员身份。"""
@@ -2035,6 +2067,7 @@ class Main(Star):
                     "avatar_text": str(display_name)[:2],
                     "fields": fields,
                 },
+                return_url=False,
                 options={
                     "type": "png",
                     "full_page": True,
@@ -2042,6 +2075,7 @@ class Main(Star):
                     "scale": "css",
                 },
             )
+            image = await asyncio.to_thread(self._crop_rendered_card_image, image)
             yield event.image_result(image)
         except ValueError as exc:
             yield event.plain_result(f"失败：{exc}")
@@ -2121,6 +2155,7 @@ class Main(Star):
             image = await self.html_render(
                 HELP_CARD_TEMPLATE,
                 {},
+                return_url=False,
                 options={
                     "type": "png",
                     "full_page": True,
@@ -2128,6 +2163,7 @@ class Main(Star):
                     "scale": "css",
                 },
             )
+            image = await asyncio.to_thread(self._crop_rendered_card_image, image)
             yield event.image_result(image)
         except Exception:
             self.logger.exception("群身份 help 指令执行失败。")
