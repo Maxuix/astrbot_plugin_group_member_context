@@ -17,5 +17,23 @@
     "description": "开启头像预览",
     "default": false,
     "hint": "默认关闭。开启后仅在插件 WebUI 中校验并显示当前页群成员的 QQ 头像，不会写入 Prompt。"
+  },
+  "admin_command_whitelist": {
+    "type": "list",
+    "description": "群身份管理员指令白名单",
+    "default": [],
+    "hint": "留空时允许所有具备基础资格的用户；非空时只有列表中的 QQ 号可以执行 add、remove、on、off。白名单非空时忽略黑名单。"
+  },
+  "admin_command_blacklist": {
+    "type": "list",
+    "description": "群身份管理员指令黑名单",
+    "default": [],
+    "hint": "仅在白名单留空时生效。列表中的 QQ 号不能执行 add、remove、on、off。"
+  },
+  "allow_members_admin_commands": {
+    "type": "bool",
+    "description": "允许普通群成员使用管理员指令",
+    "default": false,
+    "hint": "关闭时只有当前 QQ 群的群主和管理员具备基础资格；开启后当前群普通成员也具备基础资格，之后仍应用白名单或黑名单。"
   }
 }

@@ -259,7 +259,7 @@ def test_usage_rules_can_be_customized_without_member_identity_data():
     assert "1001" not in prompt
 
 
-def test_store_keeps_separate_fields_and_usage_rules():
+def test_store_migrates_global_fields_into_each_group_profile():
     store = normalize_store(
         {
             "version": 1,
@@ -282,7 +282,8 @@ def test_store_keeps_separate_fields_and_usage_rules():
         }
     )
     profile = store["sessions"]["bot-a:GroupMessage:123"]
-    assert store["custom_identity_fields"] == ["游戏名", "花名"]
+    assert "custom_identity_fields" not in store
+    assert profile["custom_identity_fields"] == ["游戏名", "花名"]
     assert profile["usage_rules"] == "只回答和项目有关的问题。"
     assert profile["members"][0]["real_names"] == ["Tony"]
     assert profile["members"][0]["nicknames"] == ["老王"]
@@ -296,11 +297,13 @@ def test_store_keeps_profiles_isolated_by_platform_and_group():
                 "bot-a:GroupMessage:123": {
                     "platform_id": "bot-a",
                     "group_id": "123",
+                    "custom_identity_fields": ["游戏名"],
                     "members": [{"user_id": "1", "aliases": ["A"]}],
                 },
                 "bot-b:GroupMessage:123": {
                     "platform_id": "bot-b",
                     "group_id": "123",
+                    "custom_identity_fields": ["部门"],
                     "members": [{"user_id": "1", "aliases": ["B"]}],
                 },
             },
@@ -312,3 +315,9 @@ def test_store_keeps_profiles_isolated_by_platform_and_group():
     }
     assert store["sessions"]["bot-a:GroupMessage:123"]["members"][0]["aliases"] == ["A"]
     assert store["sessions"]["bot-b:GroupMessage:123"]["members"][0]["aliases"] == ["B"]
+    assert store["sessions"]["bot-a:GroupMessage:123"]["custom_identity_fields"] == [
+        "游戏名"
+    ]
+    assert store["sessions"]["bot-b:GroupMessage:123"]["custom_identity_fields"] == [
+        "部门"
+    ]

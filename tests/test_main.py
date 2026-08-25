@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from astrbot_plugin_group_member_context import main as plugin_module
+from jinja2 import Template
 
+from astrbot.api.message_components import At, Plain
 from astrbot.api.platform import MessageType
 
 
@@ -26,6 +28,14 @@ class FakeClient:
         if action == "get_group_member_list":
             assert params == {"group_id": 1001}
             return self.member_payload
+        if action == "get_group_member_info":
+            user_id = str(params["user_id"])
+            for member in self.member_payload:
+                if str(member["user_id"]) == user_id:
+                    return member
+            raise RuntimeError("member not found")
+        if action == "get_group_info":
+            return {"group_id": 1001, "group_name": "研发群"}
         raise AssertionError(f"unexpected action: {action}")
 
 
@@ -77,12 +87,18 @@ class FakeEvent:
         sender_id="2001",
         message_text="",
         mentioned_user_ids=None,
+        message_components=None,
+        sender_role="member",
     ):
         self.group_id = group_id
         self.sender_id = sender_id
         self.message_text = message_text
         self.mentioned_user_ids = list(mentioned_user_ids or [])
+        self.message_components = message_components
         self._extras = {}
+        self.message_obj = SimpleNamespace(
+            raw_message={"sender": {"role": sender_role}}
+        )
 
     def get_group_id(self):
         return self.group_id
@@ -97,7 +113,12 @@ class FakeEvent:
         return self.message_text
 
     def get_messages(self):
+        if self.message_components is not None:
+            return self.message_components
         return [SimpleNamespace(qq=user_id) for user_id in self.mentioned_user_ids]
+
+    def get_self_id(self):
+        return "9999"
 
     def get_message_type(self):
         return MessageType.GROUP_MESSAGE
@@ -116,6 +137,12 @@ class FakeEvent:
             return self._extras
         return self._extras.get(key, default)
 
+    def plain_result(self, text):
+        return SimpleNamespace(kind="plain", text=text)
+
+    def image_result(self, image):
+        return SimpleNamespace(kind="image", image=image)
+
 
 def response_json(response):
     return json.loads(response.body.decode("utf-8"))
@@ -127,6 +154,26 @@ def latest_llm_report(logger):
     assert call.args[0] == "%s %s"
     assert call.args[1] == plugin_module.LLM_INJECTION_LOG_MARKER
     return json.loads(call.args[2])
+
+
+async def collect_results(generator):
+    return [result async for result in generator]
+
+
+def test_identity_card_template_renders_field_values():
+    html = Template(plugin_module.IDENTITY_CARD_TEMPLATE).render(
+        group_id="1001",
+        group_name="研发群",
+        injection_enabled=True,
+        user_id="2002",
+        display_name="A",
+        card="A同学",
+        avatar_text="A",
+        fields=[{"label": "游戏名", "values": ["Tony"]}],
+        field_count=1,
+    )
+    assert "游戏名" in html
+    assert "Tony" in html
 
 
 @pytest.mark.asyncio
@@ -143,6 +190,9 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
         "message_window_size": 18,
         "log_detail": "摘要",
         "avatar_preview_enabled": False,
+        "admin_command_whitelist": [],
+        "admin_command_blacklist": [],
+        "allow_members_admin_commands": False,
     }
 
     monkeypatch.setattr(
@@ -153,6 +203,9 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
                 "message_window_size": 48,
                 "log_detail": "全部",
                 "avatar_preview_enabled": True,
+                "admin_command_whitelist": ["2001"],
+                "admin_command_blacklist": ["2002"],
+                "allow_members_admin_commands": True,
             }
         ),
     )
@@ -163,17 +216,26 @@ async def test_webui_can_read_and_save_shared_plugin_config(monkeypatch):
         "message_window_size": 48,
         "log_detail": "全部",
         "avatar_preview_enabled": True,
+        "admin_command_whitelist": ["2001"],
+        "admin_command_blacklist": ["2002"],
+        "allow_members_admin_commands": True,
     }
     assert config == {
         "message_window_size": 48,
         "log_detail": "全部",
         "avatar_preview_enabled": True,
+        "admin_command_whitelist": ["2001"],
+        "admin_command_blacklist": ["2002"],
+        "allow_members_admin_commands": True,
     }
     assert config.saved_values == [
         {
             "message_window_size": 48,
             "log_detail": "全部",
             "avatar_preview_enabled": True,
+            "admin_command_whitelist": ["2001"],
+            "admin_command_blacklist": ["2002"],
+            "allow_members_admin_commands": True,
         }
     ]
     assert plugin._configured_message_window_size() == 48
@@ -715,3 +777,211 @@ async def test_full_log_detail_includes_the_complete_injected_prompt(monkeypatch
     assert report["status"] == "injected"
     assert report["prompt"] == request.extra_user_content_parts[0].text
     assert "【已配置的成员身份映射】" in report["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_group_admin_can_add_group_scoped_custom_identity_with_at_target():
+    context = FakeContext()
+    context.platform_manager.platform_insts[0].client.member_payload = [
+        {"user_id": 2001, "nickname": "管理员", "role": "owner"},
+        {"user_id": 2002, "nickname": "A", "card": "A同学", "role": "member"},
+    ]
+    plugin = plugin_module.Main(context)
+    plugin.get_kv_data = AsyncMock(return_value={})
+    plugin.put_kv_data = AsyncMock()
+    await plugin.initialize()
+    event = FakeEvent(
+        "1001",
+        sender_id="2001",
+        sender_role="owner",
+        message_components=[
+            Plain(text="/群身份 add"),
+            At(qq="2002", name="A同学"),
+            Plain(text="游戏名=Tony"),
+        ],
+    )
+
+    results = await collect_results(
+        plugin.group_identity_add(event, "@A同学(2002) 游戏名=Tony")
+    )
+
+    assert results[0].text == "成功：身份已添加。"
+    profile = plugin._store["sessions"]["bot-a:GroupMessage:1001"]
+    assert profile["custom_identity_fields"] == ["游戏名"]
+    member = next(item for item in profile["members"] if item["user_id"] == "2002")
+    assert member["custom_fields"] == {"游戏名": ["Tony"]}
+
+
+@pytest.mark.asyncio
+async def test_numeric_target_and_self_commands_keep_spaced_default_identity():
+    context = FakeContext()
+    context.platform_manager.platform_insts[0].client.member_payload = [
+        {"user_id": 2001, "nickname": "管理员", "role": "owner"},
+        {"user_id": 2002, "nickname": "A", "role": "member"},
+    ]
+    plugin = plugin_module.Main(context)
+    plugin.get_kv_data = AsyncMock(return_value={})
+    plugin.put_kv_data = AsyncMock()
+    await plugin.initialize()
+
+    admin_event = FakeEvent("1001", sender_id="2001", sender_role="owner")
+    added = await collect_results(
+        plugin.group_identity_add(admin_event, "2002 Tony Stark")
+    )
+    removed = await collect_results(
+        plugin.group_identity_remove(admin_event, "2002 Tony Stark")
+    )
+
+    member_event = FakeEvent("1001", sender_id="2002", sender_role="member")
+    self_added = await collect_results(
+        plugin.group_identity_me_add(member_event, "Tony Stark")
+    )
+    self_removed = await collect_results(
+        plugin.group_identity_me_remove(member_event, "Tony Stark")
+    )
+
+    assert [
+        result[0].text for result in (added, removed, self_added, self_removed)
+    ] == [
+        "成功：身份已添加。",
+        "成功：身份已删除。",
+        "成功：身份已添加。",
+        "成功：身份已删除。",
+    ]
+    profile = plugin._store["sessions"]["bot-a:GroupMessage:1001"]
+    member = next(item for item in profile["members"] if item["user_id"] == "2002")
+    assert member["nicknames"] == []
+
+
+@pytest.mark.asyncio
+async def test_admin_command_whitelist_restricts_without_blacklist_override():
+    plugin = plugin_module.Main(
+        FakeContext(),
+        config={
+            "admin_command_whitelist": ["2999"],
+            "admin_command_blacklist": ["2001"],
+        },
+    )
+    platform = plugin._find_aiocqhttp_platform("bot-a")
+    event = FakeEvent("1001", sender_id="2001", sender_role="owner")
+
+    assert await plugin._admin_command_allowed(event, platform, "1001") is False
+
+    plugin.config["admin_command_whitelist"] = ["2001"]
+    assert await plugin._admin_command_allowed(event, platform, "1001") is True
+
+
+@pytest.mark.asyncio
+async def test_member_self_service_cannot_create_group_label_but_can_use_existing_one():
+    context = FakeContext()
+    context.platform_manager.platform_insts[0].client.member_payload = [
+        {"user_id": 2002, "nickname": "A", "role": "member"},
+    ]
+    plugin = plugin_module.Main(context)
+    plugin.get_kv_data = AsyncMock(return_value={})
+    plugin.put_kv_data = AsyncMock()
+    await plugin.initialize()
+    event = FakeEvent("1001", sender_id="2002", sender_role="member")
+
+    rejected = await collect_results(plugin.group_identity_me_add(event, "游戏名=Tony"))
+    assert rejected[0].text == "失败：普通成员不能创建新的身份标签。"
+
+    profile = plugin._store["sessions"]["bot-a:GroupMessage:1001"]
+    profile["custom_identity_fields"] = ["游戏名"]
+    accepted = await collect_results(plugin.group_identity_me_add(event, "游戏名=Tony"))
+    assert accepted[0].text == "成功：身份已添加。"
+
+
+@pytest.mark.asyncio
+async def test_list_command_renders_webui_style_identity_card_without_note():
+    context = FakeContext()
+    context.platform_manager.platform_insts[0].client.member_payload = [
+        {"user_id": 2002, "nickname": "A", "card": "A同学", "role": "member"},
+    ]
+    plugin = plugin_module.Main(context)
+    plugin.get_kv_data = AsyncMock(
+        return_value={
+            "sessions": {
+                "bot-a:GroupMessage:1001": {
+                    "platform_id": "bot-a",
+                    "group_id": "1001",
+                    "group_name": "研发群",
+                    "custom_identity_fields": ["游戏名"],
+                    "members": [
+                        {
+                            "user_id": "2002",
+                            "nickname": "A",
+                            "card": "A同学",
+                            "nicknames": ["Tony"],
+                            "custom_fields": {"游戏名": ["ValorantTony"]},
+                            "note": "不应公开显示",
+                        }
+                    ],
+                }
+            }
+        }
+    )
+    plugin.put_kv_data = AsyncMock()
+    plugin.html_render = AsyncMock(return_value="identity-card.png")
+    await plugin.initialize()
+    event = FakeEvent("1001", sender_id="2002")
+
+    results = await collect_results(plugin.group_identity_list(event))
+
+    assert results[0].kind == "image"
+    assert results[0].image == "identity-card.png"
+    render_data = plugin.html_render.await_args.args[1]
+    assert render_data["fields"] == [
+        {"label": "昵称", "values": ["Tony"]},
+        {"label": "游戏名", "values": ["ValorantTony"]},
+    ]
+    assert "note" not in render_data
+
+
+@pytest.mark.asyncio
+async def test_disabled_group_skips_identity_injection():
+    plugin = plugin_module.Main(FakeContext())
+    plugin.logger = Mock()
+    plugin.get_kv_data = AsyncMock(
+        return_value={
+            "sessions": {
+                "bot-a:GroupMessage:1001": {
+                    "platform_id": "bot-a",
+                    "group_id": "1001",
+                    "injection_enabled": False,
+                    "members": [{"user_id": "2001", "aliases": ["Tony"]}],
+                }
+            }
+        }
+    )
+    await plugin.initialize()
+    request = SimpleNamespace(extra_user_content_parts=[])
+
+    await plugin.inject_member_context(FakeEvent("1001", "2001"), request)
+
+    assert request.extra_user_content_parts == []
+    assert latest_llm_report(plugin.logger)["reason"] == "group_injection_disabled"
+
+
+@pytest.mark.asyncio
+async def test_webui_stale_revision_cannot_overwrite_command_changes(monkeypatch):
+    plugin = plugin_module.Main(FakeContext())
+    plugin.get_kv_data = AsyncMock(return_value={})
+    plugin.put_kv_data = AsyncMock()
+    await plugin.initialize()
+    payload = {
+        "platform_id": "bot-a",
+        "group_id": "1001",
+        "members": [{"user_id": "2001", "nicknames": ["Tony"]}],
+        "revision": 0,
+    }
+    monkeypatch.setattr(plugin_module, "request", FakeRequest(body=payload))
+    first = response_json(await plugin.save_profile())
+    assert first["revision"] == 1
+
+    plugin._store["sessions"]["bot-a:GroupMessage:1001"]["revision"] = 2
+    monkeypatch.setattr(plugin_module, "request", FakeRequest(body=payload))
+    stale_response = await plugin.save_profile()
+
+    assert stale_response.status_code == 409
+    assert "请刷新后再保存" in response_json(stale_response)["message"]

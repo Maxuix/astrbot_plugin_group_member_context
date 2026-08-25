@@ -58,7 +58,7 @@
           <p id="reset-confirm-group" class="reset-confirm-group"></p>
           <p id="reset-confirm-description" class="reset-confirm-description">
             将清空本群所有成员的外号、真名、昵称、自定义字段值和补充说明，并将使用规则恢复为默认内容。
-            群成员列表、平台昵称、群名片和全局字段名称会保留，此操作不可撤销。
+            群成员列表、平台昵称、群名片和本群字段名称会保留，此操作不可撤销。
           </p>
           <div class="reset-dialog-actions">
             <button id="cancel-reset" class="button button-secondary" type="button">取消</button>
@@ -150,6 +150,48 @@
                   默认关闭。开启后只校验并显示当前页成员头像；未变化头像继续使用浏览器缓存，且不会写入 Prompt。
                 </p>
               </div>
+
+              <div class="config-field">
+                <span id="config-allow-member-admin-label" class="field-label">群身份管理员指令权限</span>
+                <label class="config-switch" for="config-allow-member-admin">
+                  <input
+                    id="config-allow-member-admin"
+                    class="config-switch-input"
+                    type="checkbox"
+                    role="switch"
+                    aria-labelledby="config-allow-member-admin-label config-allow-member-admin-text"
+                  />
+                  <span class="config-switch-track" aria-hidden="true"></span>
+                  <span id="config-allow-member-admin-text" class="config-switch-text">允许普通群成员使用管理员指令</span>
+                </label>
+                <p class="help-text">关闭时以当前 QQ 群的群主和管理员为基础资格。</p>
+              </div>
+
+              <div class="config-field command-access-field">
+                <label class="field-label" for="config-admin-whitelist-input">管理员指令白名单</label>
+                <div id="config-admin-whitelist" class="term-list command-access-list"></div>
+                <div class="compact-add-row">
+                  <input id="config-admin-whitelist-input" class="text-input" type="text" inputmode="numeric" placeholder="输入 QQ 号" />
+                  <button id="config-admin-whitelist-add" class="button button-small button-secondary" type="button">添加</button>
+                </div>
+                <p class="help-text">非空时只有白名单 QQ 可用，且黑名单不生效。</p>
+              </div>
+
+              <div class="config-field command-access-field">
+                <label class="field-label" for="config-admin-blacklist-input">管理员指令黑名单</label>
+                <div id="config-admin-blacklist" class="term-list command-access-list"></div>
+                <div class="compact-add-row">
+                  <input id="config-admin-blacklist-input" class="text-input" type="text" inputmode="numeric" placeholder="输入 QQ 号" />
+                  <button id="config-admin-blacklist-add" class="button button-small button-secondary" type="button">添加</button>
+                </div>
+                <p class="help-text">仅在白名单留空时生效。</p>
+              </div>
+
+              <div class="config-field">
+                <span class="field-label">当前群管理员候选</span>
+                <div id="group-admin-candidates" class="admin-candidates muted">选择群并刷新成员后显示。</div>
+                <p class="help-text">候选来自 OneBot 当前返回的群主和群管理员，可直接加入白名单或黑名单。</p>
+              </div>
             </div>
 
             <p class="help-text config-shared-help">
@@ -181,7 +223,10 @@
                 </div>
               </div>
               <div class="editor-actions">
-                <span class="editor-state">CONFIGURATION / ACTIVE</span>
+                <label class="group-injection-switch" for="group-injection-enabled">
+                  <input id="group-injection-enabled" type="checkbox" />
+                  <span id="group-injection-state" class="editor-state">INJECTION / ON</span>
+                </label>
                 <div class="editor-action-buttons">
                   <button id="reset-profile" class="button button-small button-danger" type="button">
                     完全重置
@@ -228,12 +273,12 @@
               <div class="preview-heading">
                 <div class="subsection-heading">
                   <span class="subsection-index">A</span>
-                  <h3>全局自定义身份字段</h3>
+                  <h3>本群自定义身份字段</h3>
                 </div>
-                <span class="muted">所有群会话共用字段名</span>
+                <span class="muted">仅当前平台实例与当前群生效</span>
               </div>
               <p class="help-text">
-                先添加字段名，例如“花名”“游戏名”；保存后，每位成员都会显示对应填写项，并按“字段名：内容”注入 Prompt。
+                先添加字段名，例如“花名”“游戏名”；保存后，仅本群成员显示对应填写项，并按“字段名：内容”注入 Prompt。
               </p>
               <div id="custom-identity-fields" class="term-list custom-identity-fields"></div>
               <div class="custom-field-add">

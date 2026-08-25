@@ -17,6 +17,14 @@ const state = {
   avatarVersions: new Map(),
   avatarCheckedIds: new Set(),
   avatarCheckGeneration: 0,
+  adminCommandWhitelist: [],
+  adminCommandBlacklist: [],
+  allowMemberAdminCommands: false,
+  injectionEnabled: true,
+  profileRevision: 0,
+  profileDirty: false,
+  checkingProfileStatus: false,
+  configDirty: false,
 };
 
 const elements = {
@@ -28,11 +36,21 @@ const elements = {
   configMessageWindowSize: document.getElementById("config-message-window-size"),
   configLogDetail: document.getElementById("config-log-detail"),
   configAvatarPreview: document.getElementById("config-avatar-preview"),
+  configAllowMemberAdmin: document.getElementById("config-allow-member-admin"),
+  configAdminWhitelist: document.getElementById("config-admin-whitelist"),
+  configAdminWhitelistInput: document.getElementById("config-admin-whitelist-input"),
+  configAdminWhitelistAdd: document.getElementById("config-admin-whitelist-add"),
+  configAdminBlacklist: document.getElementById("config-admin-blacklist"),
+  configAdminBlacklistInput: document.getElementById("config-admin-blacklist-input"),
+  configAdminBlacklistAdd: document.getElementById("config-admin-blacklist-add"),
+  groupAdminCandidates: document.getElementById("group-admin-candidates"),
   savePluginConfig: document.getElementById("save-plugin-config"),
   emptyState: document.getElementById("empty-state"),
   editor: document.getElementById("editor"),
   selectedGroupName: document.getElementById("selected-group-name"),
   selectedGroupMeta: document.getElementById("selected-group-meta"),
+  groupInjectionEnabled: document.getElementById("group-injection-enabled"),
+  groupInjectionState: document.getElementById("group-injection-state"),
   refreshMembers: document.getElementById("refresh-members"),
   resetProfile: document.getElementById("reset-profile"),
   resetConfirmation: document.getElementById("reset-confirmation"),
@@ -91,7 +109,23 @@ function selectedPayload() {
     members: state.members,
     custom_identity_fields: state.customIdentityFields,
     usage_rules: state.usageRules,
+    injection_enabled: state.injectionEnabled,
+    revision: state.profileRevision,
   };
+}
+
+function markProfileDirty() {
+  state.profileDirty = true;
+}
+
+function markConfigDirty() {
+  state.configDirty = true;
+}
+
+function applyGroupInjectionState(enabled) {
+  state.injectionEnabled = enabled === true;
+  elements.groupInjectionEnabled.checked = state.injectionEnabled;
+  elements.groupInjectionState.textContent = `INJECTION / ${state.injectionEnabled ? "ON" : "OFF"}`;
 }
 
 function setEditorVisible(visible) {
@@ -164,6 +198,17 @@ function applyPluginConfig(config) {
   const avatarPreviewChanged = state.avatarPreviewEnabled !== avatarPreviewEnabled;
   state.avatarPreviewEnabled = avatarPreviewEnabled;
   elements.configAvatarPreview.checked = avatarPreviewEnabled;
+  state.adminCommandWhitelist = Array.isArray(config?.admin_command_whitelist)
+    ? config.admin_command_whitelist.map(String).filter((item) => /^\d+$/.test(item))
+    : [];
+  state.adminCommandBlacklist = Array.isArray(config?.admin_command_blacklist)
+    ? config.admin_command_blacklist.map(String).filter((item) => /^\d+$/.test(item))
+    : [];
+  state.allowMemberAdminCommands = config?.allow_members_admin_commands === true;
+  elements.configAllowMemberAdmin.checked = state.allowMemberAdminCommands;
+  state.configDirty = false;
+  renderAdminCommandLists();
+  renderGroupAdminCandidates();
   if (avatarPreviewChanged) {
     state.avatarCheckGeneration += 1;
     state.avatarCheckedIds.clear();
@@ -171,7 +216,113 @@ function applyPluginConfig(config) {
   }
 }
 
-async function loadPluginConfig() {
+function renderQQConfigList(container, values, removeValue) {
+  container.replaceChildren();
+  if (!values.length) {
+    container.appendChild(createTextElement("span", "muted", "未设置"));
+    return;
+  }
+  for (const userId of values) {
+    const chip = document.createElement("span");
+    chip.className = "term-chip";
+    chip.appendChild(createTextElement("span", "", userId));
+    const remove = createTextElement("button", "chip-remove", "×");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `移除 QQ ${userId}`);
+    remove.addEventListener("click", () => removeValue(userId));
+    chip.appendChild(remove);
+    container.appendChild(chip);
+  }
+}
+
+function renderAdminCommandLists() {
+  renderQQConfigList(
+    elements.configAdminWhitelist,
+    state.adminCommandWhitelist,
+    (userId) => {
+      state.adminCommandWhitelist = state.adminCommandWhitelist.filter((item) => item !== userId);
+      markConfigDirty();
+      renderAdminCommandLists();
+      renderGroupAdminCandidates();
+    },
+  );
+  renderQQConfigList(
+    elements.configAdminBlacklist,
+    state.adminCommandBlacklist,
+    (userId) => {
+      state.adminCommandBlacklist = state.adminCommandBlacklist.filter((item) => item !== userId);
+      markConfigDirty();
+      renderAdminCommandLists();
+      renderGroupAdminCandidates();
+    },
+  );
+}
+
+function addQQToConfigList(listName, input) {
+  const userId = input.value.trim();
+  if (!/^\d+$/.test(userId)) {
+    showNotice("请输入有效的 QQ 号。", "warning");
+    return;
+  }
+  const values = state[listName];
+  if (!values.includes(userId)) {
+    values.push(userId);
+    markConfigDirty();
+  }
+  input.value = "";
+  renderAdminCommandLists();
+  renderGroupAdminCandidates();
+}
+
+function renderGroupAdminCandidates() {
+  elements.groupAdminCandidates.replaceChildren();
+  const candidates = state.members.filter((member) => ["owner", "admin"].includes(member.role));
+  if (!state.selectedGroup || !candidates.length) {
+    elements.groupAdminCandidates.textContent = state.selectedGroup
+      ? "当前成员信息中没有管理员候选。"
+      : "选择群并刷新成员后显示。";
+    return;
+  }
+  for (const member of candidates) {
+    const row = document.createElement("div");
+    row.className = "admin-candidate";
+    row.appendChild(createTextElement(
+      "span",
+      "admin-candidate-name",
+      `${member.card || member.nickname || member.user_id} · ${member.user_id}`,
+    ));
+    const actions = document.createElement("span");
+    actions.className = "admin-candidate-actions";
+    const addWhite = createTextElement("button", "button button-small button-secondary", "加白名单");
+    addWhite.type = "button";
+    addWhite.disabled = state.adminCommandWhitelist.includes(String(member.user_id));
+    addWhite.addEventListener("click", () => {
+      if (!state.adminCommandWhitelist.includes(String(member.user_id))) {
+        state.adminCommandWhitelist.push(String(member.user_id));
+        markConfigDirty();
+      }
+      renderAdminCommandLists();
+      renderGroupAdminCandidates();
+    });
+    const addBlack = createTextElement("button", "button button-small button-secondary", "加黑名单");
+    addBlack.type = "button";
+    addBlack.disabled = state.adminCommandBlacklist.includes(String(member.user_id));
+    addBlack.addEventListener("click", () => {
+      if (!state.adminCommandBlacklist.includes(String(member.user_id))) {
+        state.adminCommandBlacklist.push(String(member.user_id));
+        markConfigDirty();
+      }
+      renderAdminCommandLists();
+      renderGroupAdminCandidates();
+    });
+    actions.append(addWhite, addBlack);
+    row.appendChild(actions);
+    elements.groupAdminCandidates.appendChild(row);
+  }
+}
+
+async function loadPluginConfig({ force = false } = {}) {
+  if (state.configDirty && !force) return;
   try {
     const result = await bridge.apiGet("config");
     applyPluginConfig(result);
@@ -194,6 +345,9 @@ async function savePluginConfig() {
       message_window_size: messageWindowSize,
       log_detail: elements.configLogDetail.value,
       avatar_preview_enabled: elements.configAvatarPreview.checked,
+      admin_command_whitelist: state.adminCommandWhitelist,
+      admin_command_blacklist: state.adminCommandBlacklist,
+      allow_members_admin_commands: elements.configAllowMemberAdmin.checked,
     });
     applyPluginConfig(result);
     showNotice("插件配置已保存，页面展示与新的 LLM 请求会使用最新设置。", "success");
@@ -260,6 +414,7 @@ function renderTerms(member, field, termContainer) {
     remove.textContent = "×";
     remove.addEventListener("click", () => {
       member[field] = member[field].filter((item) => item !== term);
+      markProfileDirty();
       renderTerms(member, field, termContainer);
     });
     chip.appendChild(remove);
@@ -273,6 +428,7 @@ function addTerm(member, field, input, termContainer) {
   member[field] = Array.isArray(member[field]) ? member[field] : [];
   if (!member[field].some((item) => item.toLocaleLowerCase() === term.toLocaleLowerCase())) {
     member[field].push(term);
+    markProfileDirty();
   }
   input.value = "";
   renderTerms(member, field, termContainer);
@@ -303,6 +459,7 @@ function renderCustomFieldTerms(member, label, termContainer) {
       member.custom_fields[label] = customFieldValues(member, label).filter(
         (item) => item !== term,
       );
+      markProfileDirty();
       renderCustomFieldTerms(member, label, termContainer);
     });
     chip.appendChild(remove);
@@ -316,6 +473,7 @@ function addCustomFieldTerm(member, label, input, termContainer) {
   const values = customFieldValues(member, label);
   if (!values.some((item) => item.toLocaleLowerCase() === term.toLocaleLowerCase())) {
     values.push(term);
+    markProfileDirty();
   }
   input.value = "";
   renderCustomFieldTerms(member, label, termContainer);
@@ -365,12 +523,13 @@ function renderCustomIdentityFields() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "chip-remove";
-    remove.setAttribute("aria-label", `移除全局字段 ${label}`);
+    remove.setAttribute("aria-label", `移除本群字段 ${label}`);
     remove.textContent = "×";
     remove.addEventListener("click", () => {
       state.customIdentityFields = state.customIdentityFields.filter(
         (item) => item !== label,
       );
+      markProfileDirty();
       renderCustomIdentityFields();
       renderMembers();
     });
@@ -387,10 +546,11 @@ function addCustomIdentityField() {
     return;
   }
   if (state.customIdentityFields.length >= 16) {
-    showNotice("最多添加 16 个全局自定义身份字段。", "warning");
+    showNotice("每个群最多添加 16 个自定义身份字段。", "warning");
     return;
   }
   state.customIdentityFields.push(label.slice(0, 32));
+  markProfileDirty();
   elements.customIdentityFieldInput.value = "";
   renderCustomIdentityFields();
   renderMembers();
@@ -599,6 +759,7 @@ function renderMember(member, index) {
   noteInput.value = member.note || "";
   noteInput.addEventListener("input", () => {
     member.note = noteInput.value;
+    markProfileDirty();
   });
   form.appendChild(noteInput);
   card.appendChild(form);
@@ -749,11 +910,11 @@ function renderMembers({ scrollToFirst = false, forceAvatarCheck = false } = {})
   }
 }
 
-async function refreshMembers() {
+async function refreshMembers({ quiet = false } = {}) {
   if (!state.selectedGroup) return;
   state.loadingMembers = true;
   elements.refreshMembers.disabled = true;
-  showNotice("正在从 OneBot 刷新群成员信息…", "info");
+  if (!quiet) showNotice("正在从 OneBot 刷新群成员信息…", "info");
   try {
     const result = await bridge.apiGet("members", {
       platform_id: state.selectedGroup.platform_id,
@@ -770,21 +931,50 @@ async function refreshMembers() {
     updateConfiguredFilter();
     state.defaultUsageRules = result.default_usage_rules || state.defaultUsageRules;
     state.usageRules = result.usage_rules || state.defaultUsageRules;
+    state.profileRevision = Number(result.revision) || 0;
+    state.profileDirty = false;
+    applyGroupInjectionState(result.injection_enabled !== false);
     elements.usageRules.value = state.usageRules;
     renderCustomIdentityFields();
+    renderGroupAdminCandidates();
     if (result.group_name) state.selectedGroup.group_name = result.group_name;
     elements.selectedGroupName.textContent = state.selectedGroup.group_name || `群 ${state.selectedGroup.group_id}`;
     renderMembers({ forceAvatarCheck: state.avatarPreviewEnabled });
     elements.memberRefreshTime.textContent = `最近读取：${formatRefreshTime()}`;
-    showNotice(
-      `已刷新 ${state.members.length} 位群成员；平台昵称、群名片等资料已更新，已配置身份字段会按 QQ 号匹配保留。请保存本群设定以写入最新成员信息。`,
-      "success",
-    );
+    if (!quiet) {
+      showNotice(
+        `已刷新 ${state.members.length} 位群成员；平台昵称、群名片等资料已更新，已配置身份字段会按 QQ 号匹配保留。请保存本群设定以写入最新成员信息。`,
+        "success",
+      );
+    }
   } catch (error) {
     showNotice(error.message || "刷新群成员信息失败。", "error");
   } finally {
     state.loadingMembers = false;
     elements.refreshMembers.disabled = false;
+  }
+}
+
+async function checkProfileStatus() {
+  if (!state.selectedGroup || state.loadingMembers || state.checkingProfileStatus) return;
+  state.checkingProfileStatus = true;
+  try {
+    const result = await bridge.apiGet("profile/status", {
+      platform_id: state.selectedGroup.platform_id,
+      group_id: state.selectedGroup.group_id,
+    });
+    const remoteRevision = Number(result.revision) || 0;
+    if (remoteRevision <= state.profileRevision) return;
+    if (state.profileDirty) {
+      showNotice("本群资料已由群指令更新；请刷新后再继续编辑。", "warning");
+      return;
+    }
+    await refreshMembers({ quiet: true });
+    showNotice("已同步群内指令产生的最新身份资料。", "success");
+  } catch (error) {
+    console.warn("检查群身份资料版本失败：", error);
+  } finally {
+    state.checkingProfileStatus = false;
   }
 }
 
@@ -824,6 +1014,9 @@ async function saveProfile() {
       renderCustomIdentityFields();
       renderMembers();
     }
+    state.profileRevision = Number(result.revision) || state.profileRevision;
+    state.profileDirty = false;
+    applyGroupInjectionState(result.injection_enabled !== false);
     const selected = state.groups.find((group) => group.session_key === state.selectedGroup.session_key);
     if (selected) {
       selected.has_profile = Boolean(
@@ -831,6 +1024,8 @@ async function saveProfile() {
         || state.members.some((member) => hasConfiguredIdentity(member)),
       );
       selected.member_count = state.members.length;
+      selected.revision = state.profileRevision;
+      selected.injection_enabled = state.injectionEnabled;
     }
     renderGroupOptions();
     elements.groupSelect.value = state.selectedGroup.session_key;
@@ -875,10 +1070,14 @@ async function performResetProfile() {
       group_id: state.selectedGroup.group_id,
       group_name: state.selectedGroup.group_name || "",
       members: state.members,
+      revision: state.profileRevision,
     });
     state.members = Array.isArray(result.members) ? result.members : [];
     state.defaultUsageRules = result.default_usage_rules || state.defaultUsageRules;
     state.usageRules = result.usage_rules || state.defaultUsageRules;
+    state.profileRevision = Number(result.revision) || state.profileRevision;
+    state.profileDirty = false;
+    applyGroupInjectionState(result.injection_enabled !== false);
     state.memberSearch = "";
     state.memberPage = 1;
     state.showConfiguredOnly = false;
@@ -897,6 +1096,8 @@ async function performResetProfile() {
     if (selected) {
       selected.has_profile = false;
       selected.member_count = state.members.length;
+      selected.revision = state.profileRevision;
+      selected.injection_enabled = state.injectionEnabled;
     }
     renderGroupOptions();
     elements.groupSelect.value = state.selectedGroup.session_key;
@@ -919,6 +1120,9 @@ function selectGroup() {
   state.memberSearch = "";
   state.memberPage = 1;
   state.showConfiguredOnly = false;
+  state.profileRevision = Number(selected?.revision) || 0;
+  state.profileDirty = false;
+  applyGroupInjectionState(selected?.injection_enabled !== false);
   state.avatarCheckGeneration += 1;
   state.avatarCheckedIds.clear();
   elements.usageRules.value = "";
@@ -926,6 +1130,7 @@ function selectGroup() {
   elements.memberRefreshTime.textContent = "最近读取：尚未读取";
   updateConfiguredFilter();
   elements.promptOutput.textContent = "保存或预览后显示。";
+  renderGroupAdminCandidates();
   if (!selected) {
     setEditorVisible(false);
     return;
@@ -942,6 +1147,30 @@ async function init() {
   elements.refreshGroups.addEventListener("click", loadGroups);
   elements.groupSelect.addEventListener("change", selectGroup);
   elements.savePluginConfig.addEventListener("click", savePluginConfig);
+  for (const control of [
+    elements.configMessageWindowSize,
+    elements.configLogDetail,
+    elements.configAvatarPreview,
+    elements.configAllowMemberAdmin,
+  ]) {
+    control.addEventListener("input", markConfigDirty);
+  }
+  elements.configAdminWhitelistAdd.addEventListener("click", () =>
+    addQQToConfigList("adminCommandWhitelist", elements.configAdminWhitelistInput));
+  elements.configAdminBlacklistAdd.addEventListener("click", () =>
+    addQQToConfigList("adminCommandBlacklist", elements.configAdminBlacklistInput));
+  elements.configAdminWhitelistInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addQQToConfigList("adminCommandWhitelist", elements.configAdminWhitelistInput);
+    }
+  });
+  elements.configAdminBlacklistInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addQQToConfigList("adminCommandBlacklist", elements.configAdminBlacklistInput);
+    }
+  });
   elements.refreshMembers.addEventListener("click", refreshMembers);
   elements.resetProfile.addEventListener("click", openResetConfirmation);
   elements.cancelReset.addEventListener("click", () => closeResetConfirmation());
@@ -958,10 +1187,16 @@ async function init() {
   elements.saveProfile.addEventListener("click", saveProfile);
   elements.usageRules.addEventListener("input", () => {
     state.usageRules = elements.usageRules.value;
+    markProfileDirty();
+  });
+  elements.groupInjectionEnabled.addEventListener("change", () => {
+    applyGroupInjectionState(elements.groupInjectionEnabled.checked);
+    markProfileDirty();
   });
   elements.resetUsageRules.addEventListener("click", () => {
     state.usageRules = state.defaultUsageRules;
     elements.usageRules.value = state.usageRules;
+    markProfileDirty();
     showNotice("使用规则已恢复为默认内容；请保存本群设定后生效。", "success");
   });
   elements.addCustomIdentityField.addEventListener("click", addCustomIdentityField);
@@ -1030,6 +1265,16 @@ async function init() {
   });
   updateConfiguredFilter();
   await Promise.all([loadPluginConfig(), loadGroups()]);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      void loadPluginConfig();
+      void checkProfileStatus();
+    }
+  });
+  window.setInterval(() => {
+    void loadPluginConfig();
+    void checkProfileStatus();
+  }, 15000);
 }
 
 init().catch((error) => showNotice(error.message || "页面初始化失败。", "error"));

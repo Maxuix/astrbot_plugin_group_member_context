@@ -19,7 +19,7 @@ LOG_DETAIL_FULL = "full"
 DEFAULT_MESSAGE_WINDOW_SIZE = 20
 MIN_MESSAGE_WINDOW_SIZE = 1
 MAX_MESSAGE_WINDOW_SIZE = 200
-STORE_VERSION = 5
+STORE_VERSION = 6
 
 DEFAULT_USAGE_RULES = "\n".join(
     [
@@ -98,6 +98,33 @@ def normalize_log_detail(value: object) -> str:
     if detail in {LOG_DETAIL_FULL, "全部", "详细", "detail"}:
         return LOG_DETAIL_FULL
     return LOG_DETAIL_SUMMARY
+
+
+def normalize_enabled(value: object, *, default: bool = True) -> bool:
+    """Normalize a persisted feature switch while preserving its default."""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"1", "true", "yes", "on", "开启", "启用"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "关闭", "禁用"}:
+            return False
+    return default
+
+
+def normalize_revision(value: object) -> int:
+    """Normalize a non-negative profile revision used for conflict detection."""
+
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def normalize_id(value: object) -> str:
@@ -259,13 +286,12 @@ def normalize_store(raw: object) -> dict[str, Any]:
 
     store: dict[str, Any] = {
         "version": STORE_VERSION,
-        "custom_identity_fields": [],
         "sessions": {},
     }
     if not isinstance(raw, Mapping):
         return store
 
-    store["custom_identity_fields"] = normalize_custom_identity_fields(
+    legacy_custom_identity_fields = normalize_custom_identity_fields(
         raw.get("custom_identity_fields", [])
     )
 
@@ -299,7 +325,18 @@ def normalize_store(raw: object) -> dict[str, Any]:
             "group_id": group_id,
             "group_name": clean_text(raw_profile.get("group_name"), max_length=200),
             "members": members,
+            "custom_identity_fields": normalize_custom_identity_fields(
+                raw_profile.get(
+                    "custom_identity_fields",
+                    legacy_custom_identity_fields,
+                )
+            ),
             "usage_rules": normalize_usage_rules(raw_profile.get("usage_rules")),
+            "injection_enabled": normalize_enabled(
+                raw_profile.get("injection_enabled"),
+                default=True,
+            ),
+            "revision": normalize_revision(raw_profile.get("revision")),
             "message_window_size": normalize_message_window_size(
                 raw_profile.get("message_window_size")
             ),

@@ -409,6 +409,43 @@ h3 {
   font-weight: 700;
 }
 
+.compact-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.command-access-list {
+  margin-top: 8px;
+}
+
+.admin-candidates {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.admin-candidate {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  background: var(--paper-deep);
+}
+
+.admin-candidate-name {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: 700 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.admin-candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
 .config-shared-help {
   margin-top: 14px;
 }
@@ -639,6 +676,33 @@ textarea.text-input {
 .editor-state {
   color: var(--green);
   font-size: 9px;
+}
+
+.group-injection-switch {
+  cursor: pointer;
+}
+
+.group-injection-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.group-injection-switch .editor-state {
+  display: inline-block;
+  padding: 5px 7px;
+  border: 1px solid currentColor;
+}
+
+.group-injection-switch input:not(:checked) + .editor-state {
+  color: var(--danger);
+}
+
+.group-injection-switch input:focus-visible + .editor-state {
+  outline: 3px solid var(--yellow);
+  outline-offset: 2px;
 }
 
 .member-toolbar {

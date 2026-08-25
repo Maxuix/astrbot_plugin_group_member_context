@@ -7,6 +7,7 @@ import copy
 import hashlib
 import inspect
 import json
+import re
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -16,16 +17,25 @@ import aiohttp
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.message_components import At, Plain
 from astrbot.api.platform import MessageType
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.agent.message import TextPart
+from astrbot.core.star.filter.command import GreedyStr
+
+from .identity_card import IDENTITY_CARD_TEMPLATE
 
 from .member_context import (
     DEFAULT_MESSAGE_WINDOW_SIZE,
     DEFAULT_USAGE_RULES,
     LOG_DETAIL_FULL,
+    MAX_ALIAS_COUNT,
+    MAX_CUSTOM_IDENTITY_FIELD_COUNT,
+    MAX_CUSTOM_IDENTITY_FIELD_LENGTH,
+    MAX_IDENTITY_VALUE_COUNT,
+    MAX_TEXT_LENGTH,
     MAX_MESSAGE_WINDOW_SIZE,
     STORE_VERSION,
     build_identity_prompt,
@@ -35,10 +45,14 @@ from .member_context import (
     has_custom_identity,
     merge_remote_members,
     normalize_custom_identity_fields,
+    normalize_enabled,
     normalize_id,
     normalize_log_detail,
     normalize_member_list,
     normalize_message_window_size,
+    normalize_match_text,
+    normalize_member,
+    normalize_revision,
     normalize_store,
     normalize_usage_rules,
     select_members_for_window,
@@ -55,6 +69,23 @@ AVATAR_SIZE = 100
 MAX_AVATAR_CHECK_COUNT = 100
 AVATAR_CHECK_CONCURRENCY = 8
 AVATAR_REQUEST_TIMEOUT_SECONDS = 5
+ADMIN_COMMAND_WHITELIST_KEY = "admin_command_whitelist"
+ADMIN_COMMAND_BLACKLIST_KEY = "admin_command_blacklist"
+ALLOW_MEMBER_ADMIN_COMMANDS_KEY = "allow_members_admin_commands"
+WRITABLE_STANDARD_IDENTITY_FIELDS = {
+    "昵称": "nicknames",
+    "外号": "aliases",
+    "真名": "real_names",
+}
+RESERVED_IDENTITY_FIELDS = {
+    "QQ号",
+    "平台昵称",
+    "群名片",
+    "群角色",
+    "群头衔",
+    "备注",
+    "补充说明",
+}
 
 
 class Main(Star):
@@ -89,6 +120,12 @@ class Main(Star):
             self.list_members,
             ["GET"],
             "Refresh the latest members from a QQ group",
+        )
+        context.register_web_api(
+            f"{prefix}/profile/status",
+            self.profile_status,
+            ["GET"],
+            "Read a group profile revision without refreshing OneBot members",
         )
         context.register_web_api(
             f"{prefix}/config",
@@ -213,9 +250,10 @@ class Main(Star):
             self._store["sessions"] = sessions
         return sessions
 
-    def _custom_identity_fields(self) -> list[str]:
+    @staticmethod
+    def _profile_custom_identity_fields(profile: Mapping[str, Any]) -> list[str]:
         return normalize_custom_identity_fields(
-            self._store.get("custom_identity_fields", [])
+            profile.get("custom_identity_fields", [])
         )
 
     def _configured_message_window_size(self) -> int:
@@ -259,6 +297,43 @@ class Main(Star):
         )
         return self._normalize_config_bool(configured_value)
 
+    @staticmethod
+    def _normalize_qq_id_list(value: object) -> list[str]:
+        if isinstance(value, (str, int)):
+            value = [value]
+        if not isinstance(value, list):
+            return []
+        result: list[str] = []
+        for item in value:
+            user_id = normalize_id(item)
+            if user_id and user_id not in result:
+                result.append(user_id)
+        return result
+
+    def _configured_admin_command_whitelist(self) -> list[str]:
+        value = (
+            self.config.get(ADMIN_COMMAND_WHITELIST_KEY, [])
+            if isinstance(self.config, Mapping)
+            else []
+        )
+        return self._normalize_qq_id_list(value)
+
+    def _configured_admin_command_blacklist(self) -> list[str]:
+        value = (
+            self.config.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
+            if isinstance(self.config, Mapping)
+            else []
+        )
+        return self._normalize_qq_id_list(value)
+
+    def _configured_allow_member_admin_commands(self) -> bool:
+        value = (
+            self.config.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY, False)
+            if isinstance(self.config, Mapping)
+            else False
+        )
+        return self._normalize_config_bool(value)
+
     def _plugin_config_snapshot(self) -> dict[str, Any]:
         """Return config values in the same labels shown by AstrBot's schema."""
 
@@ -269,6 +344,11 @@ class Main(Star):
             "message_window_size": self._configured_message_window_size(),
             "log_detail": log_detail,
             "avatar_preview_enabled": self._configured_avatar_preview_enabled(),
+            ADMIN_COMMAND_WHITELIST_KEY: (self._configured_admin_command_whitelist()),
+            ADMIN_COMMAND_BLACKLIST_KEY: (self._configured_admin_command_blacklist()),
+            ALLOW_MEMBER_ADMIN_COMMANDS_KEY: (
+                self._configured_allow_member_admin_commands()
+            ),
         }
 
     async def _persist_plugin_config(self, values: Mapping[str, Any]) -> None:
@@ -560,7 +640,7 @@ class Main(Star):
     @staticmethod
     def _profile_from_payload(
         payload: Mapping[str, Any],
-    ) -> tuple[str, dict[str, Any], list[str]]:
+    ) -> tuple[str, dict[str, Any]]:
         platform_id = clean_text(payload.get("platform_id"), max_length=128)
         group_id = normalize_id(payload.get("group_id"))
         if not platform_id:
@@ -577,13 +657,19 @@ class Main(Star):
             "group_id": group_id,
             "group_name": clean_text(payload.get("group_name"), max_length=200),
             "members": members,
+            "custom_identity_fields": custom_identity_fields,
             "usage_rules": normalize_usage_rules(payload.get("usage_rules")),
+            "injection_enabled": normalize_enabled(
+                payload.get("injection_enabled"),
+                default=True,
+            ),
+            "revision": normalize_revision(payload.get("revision")),
             "message_window_size": normalize_message_window_size(
                 payload.get("message_window_size", DEFAULT_MESSAGE_WINDOW_SIZE)
             ),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        return session_key, profile, custom_identity_fields
+        return session_key, profile
 
     @staticmethod
     def _group_label(profile: Mapping[str, Any]) -> str:
@@ -651,6 +737,11 @@ class Main(Star):
                             )
                         ),
                         "member_count": len(saved_profile.get("members", [])),
+                        "injection_enabled": normalize_enabled(
+                            saved_profile.get("injection_enabled"),
+                            default=True,
+                        ),
+                        "revision": normalize_revision(saved_profile.get("revision")),
                         "message_window_size": self._configured_message_window_size(),
                     }
                 )
@@ -681,6 +772,11 @@ class Main(Star):
                         )
                     ),
                     "member_count": len(profile.get("members", [])),
+                    "injection_enabled": normalize_enabled(
+                        profile.get("injection_enabled"),
+                        default=True,
+                    ),
+                    "revision": normalize_revision(profile.get("revision")),
                     "message_window_size": self._configured_message_window_size(),
                 }
             )
@@ -836,6 +932,24 @@ class Main(Star):
                     current["avatar_preview_enabled"],
                 )
             ),
+            ADMIN_COMMAND_WHITELIST_KEY: self._normalize_qq_id_list(
+                payload.get(
+                    ADMIN_COMMAND_WHITELIST_KEY,
+                    current[ADMIN_COMMAND_WHITELIST_KEY],
+                )
+            ),
+            ADMIN_COMMAND_BLACKLIST_KEY: self._normalize_qq_id_list(
+                payload.get(
+                    ADMIN_COMMAND_BLACKLIST_KEY,
+                    current[ADMIN_COMMAND_BLACKLIST_KEY],
+                )
+            ),
+            ALLOW_MEMBER_ADMIN_COMMANDS_KEY: self._normalize_config_bool(
+                payload.get(
+                    ALLOW_MEMBER_ADMIN_COMMANDS_KEY,
+                    current[ALLOW_MEMBER_ADMIN_COMMANDS_KEY],
+                )
+            ),
         }
 
         try:
@@ -846,6 +960,36 @@ class Main(Star):
             return error_response(f"保存插件配置失败：{exc}", status_code=500)
 
         return json_response({"saved": True, **values})
+
+    async def profile_status(self):
+        """Return lightweight state used by the Page to detect external edits."""
+
+        platform_id = clean_text(request.query.get("platform_id"), max_length=128)
+        group_id = normalize_id(request.query.get("group_id"))
+        if not platform_id or not group_id:
+            return error_response(
+                "请提供有效的平台实例 ID 和 QQ 群号。", status_code=400
+            )
+        await self._ensure_store_loaded()
+        profile = self._stored_sessions().get(build_session_key(platform_id, group_id))
+        if not isinstance(profile, Mapping):
+            return json_response(
+                {
+                    "revision": 0,
+                    "injection_enabled": True,
+                    "exists": False,
+                }
+            )
+        return json_response(
+            {
+                "revision": normalize_revision(profile.get("revision")),
+                "injection_enabled": normalize_enabled(
+                    profile.get("injection_enabled"),
+                    default=True,
+                ),
+                "exists": True,
+            }
+        )
 
     async def list_members(self):
         """Fetch and merge the current member list for one selected QQ group."""
@@ -901,9 +1045,20 @@ class Main(Star):
                 "group_id": group_id,
                 "group_name": group_name,
                 "members": members,
-                "custom_identity_fields": self._custom_identity_fields(),
+                "custom_identity_fields": self._profile_custom_identity_fields(
+                    profile if isinstance(profile, Mapping) else {}
+                ),
                 "usage_rules": normalize_usage_rules(
                     profile.get("usage_rules") if isinstance(profile, Mapping) else None
+                ),
+                "injection_enabled": normalize_enabled(
+                    profile.get("injection_enabled")
+                    if isinstance(profile, Mapping)
+                    else None,
+                    default=True,
+                ),
+                "revision": normalize_revision(
+                    profile.get("revision") if isinstance(profile, Mapping) else None
                 ),
                 "default_usage_rules": DEFAULT_USAGE_RULES,
                 "message_window_size": self._configured_message_window_size(),
@@ -917,9 +1072,8 @@ class Main(Star):
         if not isinstance(payload, Mapping):
             return error_response("请求数据格式错误。", status_code=400)
         try:
-            session_key, profile, custom_identity_fields = self._profile_from_payload(
-                payload
-            )
+            session_key, profile = self._profile_from_payload(payload)
+            custom_identity_fields = self._profile_custom_identity_fields(profile)
             prompt = build_identity_prompt(
                 group_id=profile["group_id"],
                 group_name=profile["group_name"],
@@ -932,7 +1086,18 @@ class Main(Star):
 
         await self._ensure_store_loaded()
         async with self._store_lock:
-            self._store["custom_identity_fields"] = custom_identity_fields
+            existing = self._stored_sessions().get(session_key)
+            existing_profile = existing if isinstance(existing, Mapping) else {}
+            current_revision = normalize_revision(existing_profile.get("revision"))
+            submitted_revision = payload.get("revision")
+            if submitted_revision is not None and (
+                normalize_revision(submitted_revision) != current_revision
+            ):
+                return error_response(
+                    "本群资料已由群指令或其他页面更新，请刷新后再保存。",
+                    status_code=409,
+                )
+            profile["revision"] = current_revision + 1
             self._stored_sessions()[session_key] = profile
             await self._persist_store()
         return json_response(
@@ -947,6 +1112,8 @@ class Main(Star):
                 "usage_rules_customized": profile["usage_rules"] != DEFAULT_USAGE_RULES,
                 "default_usage_rules": DEFAULT_USAGE_RULES,
                 "custom_identity_fields": custom_identity_fields,
+                "injection_enabled": profile["injection_enabled"],
+                "revision": profile["revision"],
                 "message_window_size": self._configured_message_window_size(),
                 "prompt": prompt,
             }
@@ -975,6 +1142,15 @@ class Main(Star):
             sessions = self._stored_sessions()
             existing = sessions.get(session_key)
             existing_profile = existing if isinstance(existing, Mapping) else {}
+            current_revision = normalize_revision(existing_profile.get("revision"))
+            submitted_revision = payload.get("revision")
+            if submitted_revision is not None and (
+                normalize_revision(submitted_revision) != current_revision
+            ):
+                return error_response(
+                    "本群资料已由群指令或其他页面更新，请刷新后再重置。",
+                    status_code=409,
+                )
             source_members = existing_profile.get("members", [])
             if not isinstance(source_members, list) or (
                 not source_members and isinstance(payload.get("members"), list)
@@ -1000,7 +1176,15 @@ class Main(Star):
                     max_length=200,
                 ),
                 "members": reset_members,
+                "custom_identity_fields": self._profile_custom_identity_fields(
+                    existing_profile
+                ),
                 "usage_rules": DEFAULT_USAGE_RULES,
+                "injection_enabled": normalize_enabled(
+                    existing_profile.get("injection_enabled"),
+                    default=True,
+                ),
+                "revision": current_revision + 1,
                 "message_window_size": self._configured_message_window_size(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -1017,7 +1201,9 @@ class Main(Star):
                 "usage_rules_customized": False,
                 "default_usage_rules": DEFAULT_USAGE_RULES,
                 "members": reset_members,
-                "custom_identity_fields": self._custom_identity_fields(),
+                "custom_identity_fields": reset_profile["custom_identity_fields"],
+                "injection_enabled": reset_profile["injection_enabled"],
+                "revision": reset_profile["revision"],
                 "message_window_size": self._configured_message_window_size(),
             }
         )
@@ -1029,7 +1215,8 @@ class Main(Star):
         if not isinstance(payload, Mapping):
             return error_response("请求数据格式错误。", status_code=400)
         try:
-            _, profile, custom_identity_fields = self._profile_from_payload(payload)
+            _, profile = self._profile_from_payload(payload)
+            custom_identity_fields = self._profile_custom_identity_fields(profile)
             prompt = build_identity_prompt(
                 group_id=profile["group_id"],
                 group_name=profile["group_name"],
@@ -1043,12 +1230,643 @@ class Main(Star):
             {
                 "prompt": prompt,
                 "custom_identity_fields": custom_identity_fields,
+                "injection_enabled": profile["injection_enabled"],
+                "revision": profile["revision"],
                 "usage_rules": profile["usage_rules"],
                 "usage_rules_customized": profile["usage_rules"] != DEFAULT_USAGE_RULES,
                 "default_usage_rules": DEFAULT_USAGE_RULES,
                 "message_window_size": self._configured_message_window_size(),
             }
         )
+
+    @staticmethod
+    def _command_event_ids(event: AstrMessageEvent) -> tuple[str, str]:
+        group_id = normalize_id(event.get_group_id())
+        platform_id = clean_text(
+            event.get_platform_id() or event.get_platform_name(),
+            max_length=128,
+        )
+        if not group_id or not platform_id:
+            raise ValueError("该指令只能在已连接的 QQ 群中使用。")
+        return platform_id, group_id
+
+    @staticmethod
+    def _onebot_mapping(payload: object) -> Mapping[str, Any] | None:
+        if not isinstance(payload, Mapping):
+            return None
+        data = payload.get("data")
+        if isinstance(data, Mapping):
+            return data
+        return payload
+
+    async def _ensure_command_profile(
+        self,
+        event: AstrMessageEvent,
+    ) -> tuple[str, str, str, object]:
+        platform_id, group_id = self._command_event_ids(event)
+        platform = self._find_aiocqhttp_platform(platform_id)
+        if platform is None:
+            raise ValueError("未找到当前 QQ 平台连接。")
+        await self._ensure_store_loaded()
+        session_key = build_session_key(platform_id, group_id)
+        if isinstance(self._stored_sessions().get(session_key), Mapping):
+            return session_key, platform_id, group_id, platform
+
+        raw_members = await self._call_onebot_action(
+            platform,
+            "get_group_member_list",
+            group_id=int(group_id),
+        )
+        member_items = self._extract_list(raw_members)
+        if member_items is None:
+            raise ValueError("无法读取当前群成员。")
+        group_name = ""
+        try:
+            raw_group = await self._call_onebot_action(
+                platform,
+                "get_group_info",
+                group_id=int(group_id),
+            )
+            group_info = self._onebot_mapping(raw_group)
+            if group_info:
+                group_name = clean_text(
+                    group_info.get("group_name") or group_info.get("name"),
+                    max_length=200,
+                )
+        except Exception:
+            group_name = ""
+
+        profile = {
+            "platform_id": platform_id,
+            "group_id": group_id,
+            "group_name": group_name,
+            "members": merge_remote_members(member_items),
+            "custom_identity_fields": [],
+            "usage_rules": DEFAULT_USAGE_RULES,
+            "injection_enabled": True,
+            "revision": 1,
+            "message_window_size": self._configured_message_window_size(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        async with self._store_lock:
+            if not isinstance(self._stored_sessions().get(session_key), Mapping):
+                self._stored_sessions()[session_key] = profile
+                await self._persist_store()
+        return session_key, platform_id, group_id, platform
+
+    async def _fetch_group_member(
+        self,
+        platform: object,
+        group_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        try:
+            payload = await self._call_onebot_action(
+                platform,
+                "get_group_member_info",
+                group_id=int(group_id),
+                user_id=int(user_id),
+                no_cache=False,
+            )
+            member_info = self._onebot_mapping(payload)
+            if member_info is None:
+                raise ValueError
+            return normalize_member(member_info)
+        except Exception as exc:
+            raise ValueError("目标不是当前群成员或成员信息读取失败。") from exc
+
+    @staticmethod
+    def _sender_role_from_event(event: AstrMessageEvent) -> str:
+        message_obj = getattr(event, "message_obj", None)
+        raw_message = getattr(message_obj, "raw_message", None)
+        if isinstance(raw_message, Mapping):
+            sender = raw_message.get("sender")
+            if isinstance(sender, Mapping):
+                return clean_text(sender.get("role"), max_length=32).casefold()
+        return ""
+
+    async def _admin_command_allowed(
+        self,
+        event: AstrMessageEvent,
+        platform: object,
+        group_id: str,
+    ) -> bool:
+        sender_id = normalize_id(event.get_sender_id())
+        if not sender_id:
+            return False
+        role = self._sender_role_from_event(event)
+        if role not in {"owner", "admin", "member"}:
+            try:
+                sender = await self._fetch_group_member(platform, group_id, sender_id)
+                role = clean_text(sender.get("role"), max_length=32).casefold()
+            except ValueError:
+                return False
+
+        has_base_permission = role in {"owner", "admin"}
+        if self._configured_allow_member_admin_commands() and role == "member":
+            has_base_permission = True
+        if not has_base_permission:
+            return False
+
+        whitelist = self._configured_admin_command_whitelist()
+        if whitelist:
+            return sender_id in whitelist
+        return sender_id not in self._configured_admin_command_blacklist()
+
+    @staticmethod
+    def _target_mentions(event: AstrMessageEvent) -> tuple[list[str], bool]:
+        target_ids: list[str] = []
+        mentioned_all = False
+        self_id = normalize_id(event.get_self_id())
+        for component in event.get_messages() or []:
+            if not isinstance(component, At):
+                continue
+            if str(component.qq).casefold() == "all":
+                mentioned_all = True
+                continue
+            user_id = normalize_id(component.qq)
+            if user_id and user_id != self_id and user_id not in target_ids:
+                target_ids.append(user_id)
+        return target_ids, mentioned_all
+
+    @staticmethod
+    def _plain_after_target(event: AstrMessageEvent, target_id: str) -> str:
+        found_target = False
+        parts: list[str] = []
+        for component in event.get_messages() or []:
+            if isinstance(component, At) and normalize_id(component.qq) == target_id:
+                found_target = True
+                continue
+            if found_target and isinstance(component, Plain):
+                text = str(component.text).strip()
+                if text:
+                    parts.append(text)
+        return " ".join(parts).strip()
+
+    def _target_and_expression(
+        self,
+        event: AstrMessageEvent,
+        payload: str,
+    ) -> tuple[str, str]:
+        target_ids, mentioned_all = self._target_mentions(event)
+        if mentioned_all:
+            raise ValueError("不能把全体成员作为目标。")
+        if len(target_ids) > 1:
+            raise ValueError("一次只能指定一名群成员。")
+        if target_ids:
+            target_id = target_ids[0]
+            expression = self._plain_after_target(event, target_id)
+            if not expression:
+                match = re.search(
+                    rf"\({re.escape(target_id)}\)\s*(.+)$",
+                    str(payload).strip(),
+                )
+                expression = match.group(1).strip() if match else ""
+            return target_id, expression
+
+        parts = str(payload).strip().split(maxsplit=1)
+        target_id = normalize_id(parts[0]) if parts else ""
+        if not target_id:
+            raise ValueError("请使用真实 @ 或 QQ 号指定一名群成员。")
+        return target_id, parts[1].strip() if len(parts) > 1 else ""
+
+    def _list_target(self, event: AstrMessageEvent, payload: str) -> str:
+        target_ids, mentioned_all = self._target_mentions(event)
+        if mentioned_all:
+            raise ValueError("不能查看全体成员。")
+        if len(target_ids) > 1:
+            raise ValueError("一次只能查看一名群成员。")
+        if target_ids:
+            return target_ids[0]
+        raw_target = str(payload).strip()
+        if not raw_target:
+            return normalize_id(event.get_sender_id())
+        target_id = normalize_id(raw_target)
+        if not target_id:
+            raise ValueError("请使用真实 @ 或 QQ 号指定一名群成员。")
+        return target_id
+
+    @staticmethod
+    def _parse_identity_expression(expression: str) -> tuple[str, str]:
+        normalized_expression = " ".join(str(expression).replace("\x00", "").split())
+        if not normalized_expression:
+            raise ValueError("缺少身份内容。")
+        separator_index = -1
+        for separator in ("=", "＝"):
+            current_index = normalized_expression.find(separator)
+            if current_index >= 0 and (
+                separator_index < 0 or current_index < separator_index
+            ):
+                separator_index = current_index
+        if separator_index >= 0:
+            raw_label = normalized_expression[:separator_index].strip()
+            raw_value = normalized_expression[separator_index + 1 :].strip()
+            if not raw_label or not raw_value:
+                raise ValueError("身份标签和身份内容都不能为空。")
+            if len(raw_label) > MAX_CUSTOM_IDENTITY_FIELD_LENGTH:
+                raise ValueError("身份标签过长。")
+            label = clean_text(
+                raw_label,
+                max_length=MAX_CUSTOM_IDENTITY_FIELD_LENGTH,
+            )
+            value = raw_value
+        else:
+            label = "昵称"
+            value = normalized_expression
+        if len(value) > MAX_TEXT_LENGTH:
+            raise ValueError("身份内容过长。")
+        return label, clean_text(value, max_length=MAX_TEXT_LENGTH)
+
+    async def _mutate_member_identity(
+        self,
+        event: AstrMessageEvent,
+        *,
+        target_id: str,
+        expression: str,
+        remove: bool,
+        self_service: bool,
+    ) -> str:
+        (
+            session_key,
+            _platform_id,
+            group_id,
+            platform,
+        ) = await self._ensure_command_profile(event)
+        if self_service and target_id != normalize_id(event.get_sender_id()):
+            return "失败：普通成员只能修改自己的身份。"
+        remote_member = await self._fetch_group_member(platform, group_id, target_id)
+        label, value = self._parse_identity_expression(expression)
+        reserved_keys = {field.casefold() for field in RESERVED_IDENTITY_FIELDS}
+        if label.casefold() in reserved_keys:
+            return "失败：该字段由平台维护，不能通过指令修改。"
+
+        async with self._store_lock:
+            raw_profile = self._stored_sessions().get(session_key)
+            if not isinstance(raw_profile, dict):
+                return "失败：本群身份资料不存在。"
+            members = raw_profile.get("members")
+            if not isinstance(members, list):
+                members = []
+                raw_profile["members"] = members
+            member = next(
+                (
+                    item
+                    for item in members
+                    if isinstance(item, dict)
+                    and normalize_id(item.get("user_id")) == target_id
+                ),
+                None,
+            )
+            if member is None:
+                member = remote_member
+                members.append(member)
+            else:
+                member = merge_remote_members([remote_member], [member])[0]
+                member_index = next(
+                    index
+                    for index, item in enumerate(members)
+                    if isinstance(item, Mapping)
+                    and normalize_id(item.get("user_id")) == target_id
+                )
+                members[member_index] = member
+
+            standard_field = next(
+                (
+                    field
+                    for field_label, field in WRITABLE_STANDARD_IDENTITY_FIELDS.items()
+                    if field_label.casefold() == label.casefold()
+                ),
+                "",
+            )
+            fields = self._profile_custom_identity_fields(raw_profile)
+            custom_label = next(
+                (field for field in fields if field.casefold() == label.casefold()),
+                "",
+            )
+            if not standard_field and not custom_label:
+                if remove:
+                    return "失败：身份标签不存在。"
+                if self_service:
+                    return "失败：普通成员不能创建新的身份标签。"
+                if len(fields) >= MAX_CUSTOM_IDENTITY_FIELD_COUNT:
+                    return "失败：本群自定义身份标签已达到上限。"
+                fields.append(label)
+                raw_profile["custom_identity_fields"] = fields
+                custom_label = label
+
+            if standard_field:
+                values = member.get(standard_field)
+                if not isinstance(values, list):
+                    values = []
+                    member[standard_field] = values
+                max_count = (
+                    MAX_ALIAS_COUNT
+                    if standard_field == "aliases"
+                    else MAX_IDENTITY_VALUE_COUNT
+                )
+            else:
+                custom_fields = member.get("custom_fields")
+                if not isinstance(custom_fields, dict):
+                    custom_fields = {}
+                    member["custom_fields"] = custom_fields
+                values = custom_fields.get(custom_label)
+                if not isinstance(values, list):
+                    values = []
+                    custom_fields[custom_label] = values
+                max_count = MAX_IDENTITY_VALUE_COUNT
+
+            value_key = normalize_match_text(value)
+            matching_indexes = [
+                index
+                for index, current in enumerate(values)
+                if normalize_match_text(current) == value_key
+            ]
+            if remove:
+                if not matching_indexes:
+                    return "失败：未找到对应身份。"
+                for index in reversed(matching_indexes):
+                    values.pop(index)
+            else:
+                if matching_indexes:
+                    return "成功：该身份已存在。"
+                if len(values) >= max_count:
+                    return "失败：该身份标签的内容已达到上限。"
+                values.append(value)
+
+            raw_profile["revision"] = (
+                normalize_revision(raw_profile.get("revision")) + 1
+            )
+            raw_profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await self._persist_store()
+        return "成功：身份已删除。" if remove else "成功：身份已添加。"
+
+    async def _set_group_injection(
+        self,
+        event: AstrMessageEvent,
+        enabled: bool,
+    ) -> str:
+        (
+            session_key,
+            _platform_id,
+            group_id,
+            platform,
+        ) = await self._ensure_command_profile(event)
+        if not await self._admin_command_allowed(event, platform, group_id):
+            return "失败：你没有权限执行该指令。"
+        async with self._store_lock:
+            profile = self._stored_sessions().get(session_key)
+            if not isinstance(profile, dict):
+                return "失败：本群身份资料不存在。"
+            profile["injection_enabled"] = enabled
+            profile["revision"] = normalize_revision(profile.get("revision")) + 1
+            profile["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await self._persist_store()
+        return f"成功：身份注入已{'开启' if enabled else '关闭'}。"
+
+    @staticmethod
+    def _identity_card_fields(
+        member: Mapping[str, Any],
+        custom_identity_fields: list[str],
+    ) -> list[dict[str, Any]]:
+        fields: list[dict[str, Any]] = []
+        for label, key in (
+            ("外号", "aliases"),
+            ("真名", "real_names"),
+            ("昵称", "nicknames"),
+        ):
+            values = member.get(key, [])
+            if isinstance(values, list) and values:
+                fields.append({"label": label, "values": values})
+        custom_fields = member.get("custom_fields", {})
+        if isinstance(custom_fields, Mapping):
+            for label in custom_identity_fields:
+                values = custom_fields.get(label, [])
+                if isinstance(values, list) and values:
+                    fields.append({"label": label, "values": values})
+        return fields
+
+    @filter.command_group("群身份")
+    def group_identity(self):
+        """Manage member identities in the current QQ group."""
+
+    @group_identity.command("add", alias={"添加"})
+    async def group_identity_add(
+        self,
+        event: AstrMessageEvent,
+        payload: GreedyStr,
+    ):
+        """Add an identity for one member; group administrators only."""
+
+        try:
+            (
+                _session_key,
+                _platform_id,
+                group_id,
+                platform,
+            ) = await self._ensure_command_profile(event)
+            if not await self._admin_command_allowed(event, platform, group_id):
+                yield event.plain_result("失败：你没有权限执行该指令。")
+                return
+            target_id, expression = self._target_and_expression(event, payload)
+            result = await self._mutate_member_identity(
+                event,
+                target_id=target_id,
+                expression=expression,
+                remove=False,
+                self_service=False,
+            )
+            yield event.plain_result(result)
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 add 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
+    @group_identity.command("remove", alias={"删除", "rm"})
+    async def group_identity_remove(
+        self,
+        event: AstrMessageEvent,
+        payload: GreedyStr,
+    ):
+        """Remove an identity from one member; group administrators only."""
+
+        try:
+            (
+                _session_key,
+                _platform_id,
+                group_id,
+                platform,
+            ) = await self._ensure_command_profile(event)
+            if not await self._admin_command_allowed(event, platform, group_id):
+                yield event.plain_result("失败：你没有权限执行该指令。")
+                return
+            target_id, expression = self._target_and_expression(event, payload)
+            result = await self._mutate_member_identity(
+                event,
+                target_id=target_id,
+                expression=expression,
+                remove=True,
+                self_service=False,
+            )
+            yield event.plain_result(result)
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 remove 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
+    @group_identity.command("me", alias={"我"})
+    async def group_identity_me_add(
+        self,
+        event: AstrMessageEvent,
+        expression: GreedyStr,
+    ):
+        """Add an identity for the current sender."""
+
+        try:
+            result = await self._mutate_member_identity(
+                event,
+                target_id=normalize_id(event.get_sender_id()),
+                expression=expression,
+                remove=False,
+                self_service=True,
+            )
+            yield event.plain_result(result)
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 me 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
+    @group_identity.command("merm", alias={"我删"})
+    async def group_identity_me_remove(
+        self,
+        event: AstrMessageEvent,
+        expression: GreedyStr,
+    ):
+        """Remove an identity from the current sender."""
+
+        try:
+            result = await self._mutate_member_identity(
+                event,
+                target_id=normalize_id(event.get_sender_id()),
+                expression=expression,
+                remove=True,
+                self_service=True,
+            )
+            yield event.plain_result(result)
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 merm 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
+    @group_identity.command("list", alias={"查看"})
+    async def group_identity_list(
+        self,
+        event: AstrMessageEvent,
+        target: str = "",
+    ):
+        """Render one member's identities as a compact image card."""
+
+        try:
+            (
+                session_key,
+                _platform_id,
+                group_id,
+                platform,
+            ) = await self._ensure_command_profile(event)
+            target_id = self._list_target(event, target)
+            remote_member = await self._fetch_group_member(
+                platform,
+                group_id,
+                target_id,
+            )
+            profile = self._stored_sessions().get(session_key)
+            if not isinstance(profile, Mapping):
+                raise ValueError("本群身份资料不存在。")
+            saved_members = profile.get("members", [])
+            member = merge_remote_members(
+                [remote_member],
+                saved_members if isinstance(saved_members, list) else [],
+            )[0]
+            fields = self._identity_card_fields(
+                member,
+                self._profile_custom_identity_fields(profile),
+            )
+            display_name = member.get("nickname") or member.get("card") or target_id
+            image = await self.html_render(
+                IDENTITY_CARD_TEMPLATE,
+                {
+                    "group_id": group_id,
+                    "group_name": self._group_label(profile) or f"群 {group_id}",
+                    "injection_enabled": normalize_enabled(
+                        profile.get("injection_enabled"),
+                        default=True,
+                    ),
+                    "user_id": target_id,
+                    "display_name": display_name,
+                    "card": member.get("card", ""),
+                    "avatar_text": str(display_name)[:2],
+                    "fields": fields,
+                    "field_count": len(fields),
+                },
+                options={
+                    "type": "png",
+                    "full_page": True,
+                    "animations": "disabled",
+                    "scale": "css",
+                },
+            )
+            yield event.image_result(image)
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 list 指令执行失败。")
+            yield event.plain_result("失败：身份卡片生成失败。")
+
+    @group_identity.command("on", alias={"开启"})
+    async def group_identity_on(self, event: AstrMessageEvent):
+        """Enable identity injection for the current group."""
+
+        try:
+            yield event.plain_result(await self._set_group_injection(event, True))
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 on 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
+    @group_identity.command("off", alias={"关闭"})
+    async def group_identity_off(self, event: AstrMessageEvent):
+        """Disable identity injection for the current group."""
+
+        try:
+            yield event.plain_result(await self._set_group_injection(event, False))
+        except ValueError as exc:
+            yield event.plain_result(f"失败：{exc}")
+        except Exception:
+            self.logger.exception("群身份 off 指令执行失败。")
+            yield event.plain_result("失败：插件内部错误。")
+
+    @group_identity.command("help", alias={"帮助"})
+    async def group_identity_help(self, event: AstrMessageEvent):
+        """Show concise command usage."""
+
+        help_text = "\n".join(
+            [
+                "群身份指令：",
+                "/群身份 add @成员/QQ 身份",
+                "/群身份 add @成员/QQ 标签=身份",
+                "/群身份 remove @成员/QQ [标签=]身份",
+                "/群身份 me [标签=]身份",
+                "/群身份 merm [标签=]身份",
+                "/群身份 list [@成员/QQ]",
+                "/群身份 on | off | help",
+                "未写标签时默认为“昵称”。",
+            ]
+        )
+        yield event.plain_result(help_text)
 
     @filter.on_llm_request()
     async def inject_member_context(
@@ -1109,6 +1927,9 @@ class Main(Star):
             if not isinstance(profile, Mapping):
                 report["reason"] = "profile_not_found"
                 return
+            if not normalize_enabled(profile.get("injection_enabled"), default=True):
+                report["reason"] = "group_injection_disabled"
+                return
             profile_members = profile.get("members", [])
             if isinstance(profile_members, list):
                 report["profile_member_count"] = len(profile_members)
@@ -1123,7 +1944,7 @@ class Main(Star):
             report["usage_rules_customized"] = (
                 normalized_usage_rules != DEFAULT_USAGE_RULES
             )
-            custom_identity_fields = self._custom_identity_fields()
+            custom_identity_fields = self._profile_custom_identity_fields(profile)
             window_messages = await self._record_group_message_window(
                 event,
                 session_key,
