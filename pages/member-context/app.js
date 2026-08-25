@@ -213,9 +213,13 @@ function applyPluginConfig(config) {
 function memberLabel(userId) {
   const member = state.members.find((item) => String(item.user_id) === String(userId));
   if (!member) return `QQ ${userId}`;
-  const roleLabels = { owner: "群主", admin: "管理员", member: "成员" };
   const name = member.card || member.nickname || member.user_id;
-  return `${name} · ${member.user_id} · ${roleLabels[member.role] || "成员"}`;
+  return `${name} · ${member.user_id} · ${memberRoleLabel(member)}`;
+}
+
+function memberRoleLabel(member) {
+  const roleLabels = { owner: "群主", admin: "群管理员", member: "普通成员" };
+  return roleLabels[member?.role] || "身份未知";
 }
 
 function renderQQPolicyList(container, values, removeValue) {
@@ -275,6 +279,10 @@ function memberMatchesPolicySearch(member, query) {
     normalizedSearchValue(value).includes(query));
 }
 
+function memberCanAppearInPolicyPicker(member) {
+  return state.allowMemberAdminCommands || ["owner", "admin"].includes(member.role);
+}
+
 function policyPickerConfigs() {
   return [
     {
@@ -305,13 +313,21 @@ function renderPolicyPicker(config, open = false) {
   const query = normalizedSearchValue(input.value);
   const matches = sortedPolicyMembers().filter((member) => {
     const userId = String(member.user_id);
-    return !state[listName].includes(userId) && memberMatchesPolicySearch(member, query);
+    return (
+      memberCanAppearInPolicyPicker(member)
+      && !state[listName].includes(userId)
+      && memberMatchesPolicySearch(member, query)
+    );
   });
   if (!matches.length) {
     options.appendChild(createTextElement(
       "p",
       "member-picker-empty",
-      state.members.length ? "没有匹配的可选成员。" : "暂无群成员。",
+      state.members.length
+        ? state.allowMemberAdminCommands
+          ? "没有匹配的可选成员。"
+          : "没有匹配的可选群主或管理员。"
+        : "暂无群成员。",
     ));
   }
   for (const member of matches) {
@@ -327,6 +343,7 @@ function renderPolicyPicker(config, open = false) {
     ));
     const details = [
       `QQ ${userId}`,
+      `群身份 ${memberRoleLabel(member)}`,
       member.card ? `群备注 ${member.card}` : "",
       member.nickname ? `平台昵称 ${member.nickname}` : "",
     ].filter(Boolean).join(" · ");
@@ -348,6 +365,14 @@ function populateAdminPolicyPickers(openInput = null) {
   }
 }
 
+function updateAdminPolicyPickerMode() {
+  const placeholder = state.allowMemberAdminCommands
+    ? "搜索全体群成员…"
+    : "搜索群主或管理员…";
+  for (const { input } of policyPickerConfigs()) input.placeholder = placeholder;
+  populateAdminPolicyPickers();
+}
+
 function addMemberToPolicy(listName, userId, otherListName) {
   if (!userId) return;
   state[otherListName] = state[otherListName].filter((item) => item !== userId);
@@ -367,7 +392,7 @@ function applyGroupPolicy(profile) {
   state.allowMemberAdminCommands = profile?.allow_members_admin_commands === true;
   elements.groupAllowMemberAdmin.checked = state.allowMemberAdminCommands;
   renderAdminCommandLists();
-  populateAdminPolicyPickers();
+  updateAdminPolicyPickerMode();
 }
 
 async function loadPluginConfig({ force = false } = {}) {
@@ -1221,6 +1246,7 @@ async function init() {
   elements.groupAllowMemberAdmin.addEventListener("change", () => {
     state.allowMemberAdminCommands = elements.groupAllowMemberAdmin.checked;
     markProfileDirty();
+    updateAdminPolicyPickerMode();
   });
   for (const config of policyPickerConfigs()) {
     const openPicker = () => populateAdminPolicyPickers(config.input);
