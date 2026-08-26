@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="#安装">
-    <img src="https://img.shields.io/badge/version-v1.3.3-2ea44f?style=flat-square" alt="版本 v1.3.3" />
+    <img src="https://img.shields.io/badge/version-v1.3.4-2ea44f?style=flat-square" alt="版本 v1.3.4" />
   </a>
   <a href="#环境要求">
     <img src="https://img.shields.io/badge/AstrBot-4.x-58a637?style=flat-square" alt="AstrBot 4.x" />

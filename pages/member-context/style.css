@@ -1306,14 +1306,15 @@ pre {
 }
 
 .relationship-beta-note,
+.graph-node-bot .graph-node-name {
+  -webkit-text-stroke: 0.35px var(--surface-inverse);
+  paint-order: stroke fill;
+}
+
 .graph-chip-bot .graph-chip-badge,
-.graph-node-bot .graph-node-name,
 .graph-node-bot .graph-node-badge {
-  text-shadow:
-    -1px -1px 0 var(--surface-inverse),
-    1px -1px 0 var(--surface-inverse),
-    -1px 1px 0 var(--surface-inverse),
-    1px 1px 0 var(--surface-inverse);
+  -webkit-text-stroke: 0.25px var(--surface-inverse);
+  paint-order: stroke fill;
 }
 
 .relationship-panel {
