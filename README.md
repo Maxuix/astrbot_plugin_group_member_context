@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="#安装">
-    <img src="https://img.shields.io/badge/version-v1.3.0-2ea44f?style=flat-square" alt="版本 v1.3.0" />
+    <img src="https://img.shields.io/badge/version-v1.3.1-2ea44f?style=flat-square" alt="版本 v1.3.1" />
   </a>
   <a href="#环境要求">
     <img src="https://img.shields.io/badge/AstrBot-4.x-58a637?style=flat-square" alt="AstrBot 4.x" />
@@ -128,7 +128,7 @@ AstrBot/data/plugins/astrbot_plugin_group_member_context/
 
 > **开发中功能，可能不可用。** 关系网络目前仍在开发和验证中，请不要把它作为稳定功能依赖。
 
-在「关系网络」页签中，可以把群成员和本机器人拖入画布并用关系线连接。打开「将关系网注入上下文」并保存后：
+在「关系网络」页签中，可以把群成员和本机器人拖入画布并用关系线连接。打开「开启关系网络」并保存后：
 
 - 群友之间的关系写入身份上下文的【群成员关系】，例如「小明 与 小红 的关系是：情侣」。
 - 本机器人相关的关系单独注入【你与群成员的关系】，例如「你和群友小红的关系是：朋友」。

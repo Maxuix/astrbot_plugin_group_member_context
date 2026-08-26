@@ -293,10 +293,6 @@
                 02B 关系网络
               </button>
             </div>
-            <p id="relationships-beta-note" class="editor-tabs-note" role="note">
-              关系网络：开发中功能，可能不可用
-            </p>
-
             <div id="identity-pane" class="editor-pane" role="tabpanel" aria-labelledby="tab-identity">
             <div class="member-toolbar">
               <div class="toolbar-title">
@@ -406,13 +402,16 @@
                     <label class="config-switch" for="relationship-enabled">
                       <input id="relationship-enabled" class="config-switch-input" type="checkbox" role="switch" />
                       <span class="config-switch-track" aria-hidden="true"></span>
-                      <span class="config-switch-text">将关系网注入上下文</span>
+                      <span class="config-switch-text">开启关系网络</span>
                     </label>
                     <button id="save-profile-graph" class="button button-primary" type="button">
                       保存本群设定
                     </button>
                   </div>
                 </div>
+                <p id="relationships-beta-note" class="relationship-beta-note" role="note">
+                  开发中功能，可能不可用
+                </p>
                 <p id="graph-status" class="muted">0 人 · 0 机器人 · 0 条关系</p>
                 <div class="graph-type-bar">
                   <div id="graph-type-list" class="graph-type-list" role="listbox" aria-label="关系线"></div>

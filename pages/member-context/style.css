@@ -1273,12 +1273,12 @@ pre {
   color: var(--text-on-accent);
 }
 
-.editor-tabs-note {
-  margin: 0 0 16px;
+.relationship-beta-note {
+  margin: -2px 0 0;
   padding: 6px 12px;
-  border-right: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
-  border-left: 1px solid var(--line-soft);
+  border: 1px solid var(--line-soft);
+  border-top: 0;
+  background: var(--panel-alt);
   color: var(--warning);
   font-size: 12px;
   font-weight: 700;
