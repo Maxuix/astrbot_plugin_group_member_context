@@ -923,7 +923,7 @@ export function createRelationshipGraph(options) {
   function renderPreview() {
     const { peer, bot } = formatPreview();
     refs.peerPreview.textContent = peer.join("\n") || "尚无人与人的关系。";
-    refs.botPreview.textContent = bot.join("\n") || "尚无你与群友的关系。";
+    refs.botPreview.textContent = bot.join("\n") || "尚无机器人与群成员的关系。";
   }
 
   function renderAll() {

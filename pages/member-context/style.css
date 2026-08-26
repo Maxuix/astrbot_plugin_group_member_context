@@ -1273,15 +1273,25 @@ pre {
   color: var(--text-on-accent);
 }
 
+.relationship-panel > .preview-heading {
+  align-items: center;
+}
+
+.relationship-panel > .preview-heading .subsection-index {
+  transform: translateY(1px);
+}
+
+.relationship-heading-actions .config-switch {
+  margin-top: 0;
+}
+
 .relationship-beta-note {
-  margin: -2px 0 0;
-  padding: 6px 12px;
-  border: 1px solid var(--line-soft);
-  border-top: 0;
-  background: var(--panel-alt);
+  flex: 0 1 auto;
+  margin: 0;
   color: var(--warning);
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .relationship-panel {
@@ -1384,7 +1394,7 @@ pre {
 }
 
 .graph-chip-bot {
-  border-color: var(--yellow);
+  border-color: var(--line);
 }
 
 .graph-chip-badge,
@@ -1395,6 +1405,11 @@ pre {
   color: var(--text-on-accent);
   font: 700 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.08em;
+}
+
+.graph-chip-bot .graph-chip-badge {
+  background: transparent;
+  color: var(--yellow);
 }
 
 .graph-type-kicker {
@@ -1533,7 +1548,16 @@ pre {
 }
 
 .graph-node-bot .graph-node {
-  box-shadow: 0 0 0 3px var(--yellow), var(--shadow);
+  box-shadow: var(--shadow);
+}
+
+.graph-node-bot .graph-node-name {
+  color: var(--yellow);
+}
+
+.graph-node-bot .graph-node-badge {
+  background: transparent;
+  color: var(--yellow);
 }
 
 .graph-node-wrap {

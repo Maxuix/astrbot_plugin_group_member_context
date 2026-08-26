@@ -29,7 +29,7 @@
           <p class="eyebrow">IDENTITY REFERENCE / GROUP WORKBENCH</p>
           <h1>群成员身份上下文</h1>
           <p class="subtitle">
-            为每个 QQ 群维护可核对的身份资料，让模型在当前对话窗口内准确理解“这个名字是谁”。
+            为每个 QQ 群维护可核对的身份资料和关系网络，让模型在当前对话窗口内准确理解“这个名字是谁”以及“他们是什么关系”。
           </p>
         </div>
         <div class="hero-meta">
@@ -399,6 +399,9 @@
                     <h3 id="relationship-title">关系网络</h3>
                   </div>
                   <div class="relationship-heading-actions">
+                    <p id="relationships-beta-note" class="relationship-beta-note" role="note">
+                      开发中功能，可能存在bug，请谨慎开启
+                    </p>
                     <label class="config-switch" for="relationship-enabled">
                       <input id="relationship-enabled" class="config-switch-input" type="checkbox" role="switch" />
                       <span class="config-switch-track" aria-hidden="true"></span>
@@ -409,9 +412,6 @@
                     </button>
                   </div>
                 </div>
-                <p id="relationships-beta-note" class="relationship-beta-note" role="note">
-                  开发中功能，可能不可用
-                </p>
                 <p id="graph-status" class="muted">0 人 · 0 机器人 · 0 条关系</p>
                 <div class="graph-type-bar">
                   <div id="graph-type-list" class="graph-type-list" role="listbox" aria-label="关系线"></div>
@@ -478,9 +478,9 @@
                   <section>
                     <div class="subsection-heading">
                       <span class="subsection-index">B</span>
-                      <h3>你与群成员的关系</h3>
+                      <h3>机器人与群成员的关系</h3>
                     </div>
-                    <pre id="bot-relationship-preview">尚无你与群友的关系。</pre>
+                    <pre id="bot-relationship-preview">尚无机器人与群成员的关系。</pre>
                   </section>
                 </div>
               </section>
