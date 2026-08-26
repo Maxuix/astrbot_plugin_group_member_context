@@ -38,6 +38,8 @@ class FakeClient:
             raise RuntimeError("member not found")
         if action == "get_group_info":
             return {"group_id": 1001, "group_name": "研发群"}
+        if action == "get_login_info":
+            return {"user_id": 9999, "nickname": "测试机器人"}
         raise AssertionError(f"unexpected action: {action}")
 
 
@@ -1145,3 +1147,92 @@ async def test_webui_stale_revision_cannot_overwrite_command_changes(monkeypatch
 
     assert stale_response.status_code == 409
     assert "请刷新后再保存" in response_json(stale_response)["message"]
+
+
+@pytest.mark.asyncio
+async def test_relationship_graph_saves_and_injects_a_separate_bot_prompt(
+    monkeypatch,
+):
+    plugin = plugin_module.Main(FakeContext())
+    plugin.logger = Mock()
+    plugin.get_kv_data = AsyncMock(return_value={})
+    plugin.put_kv_data = AsyncMock()
+    await plugin.initialize()
+
+    monkeypatch.setattr(
+        plugin_module,
+        "request",
+        FakeRequest(query={"platform_id": "bot-a", "group_id": "1001"}),
+    )
+    imported = response_json(await plugin.list_members())
+    assert imported["bot"]["user_id"] == "9999"
+    assert imported["relationship_injection_enabled"] is False
+
+    monkeypatch.setattr(
+        plugin_module,
+        "request",
+        FakeRequest(
+            body={
+                "platform_id": "bot-a",
+                "group_id": "1001",
+                "group_name": "研发群",
+                "members": [
+                    {
+                        "user_id": "2001",
+                        "nickname": "A",
+                        "card": "小明",
+                        "aliases": ["Tony"],
+                    },
+                    {"user_id": "2002", "nickname": "小红"},
+                ],
+                "bot": {"user_id": "9999", "nickname": "测试机器人"},
+                "relationship_injection_enabled": True,
+                "relationship_nodes": [
+                    {"id": "__self__", "kind": "bot", "x": 0, "y": 0},
+                    {"user_id": "2001", "x": 40, "y": 0},
+                    {"user_id": "2002", "x": 80, "y": 0},
+                ],
+                "relationship_edges": [
+                    {
+                        "source": "__self__",
+                        "target": "2001",
+                        "type_id": "friend",
+                    },
+                    {
+                        "source": "2001",
+                        "target": "2002",
+                        "type_id": "couple",
+                    },
+                ],
+            }
+        ),
+    )
+    saved = response_json(await plugin.save_profile())
+    assert saved["relationship_injection_enabled"] is True
+    assert "小明（QQ：2001） 与 小红（QQ：2002） 的关系是：情侣" in saved["prompt"]
+    assert "你和群友小明（QQ：2001）的关系是：朋友" in saved["bot_prompt"]
+    assert "【你与群成员的关系】" not in saved["prompt"].split("\n【群成员关系】\n")[-1]
+
+    request = SimpleNamespace(extra_user_content_parts=[])
+    await plugin.inject_member_context(FakeEvent("1001", "2001"), request)
+    assert len(request.extra_user_content_parts) == 2
+    identity_text = request.extra_user_content_parts[0].text
+    bot_text = request.extra_user_content_parts[1].text
+    assert identity_text.startswith("<group_member_identity_context>")
+    assert "与 小红（QQ：2002） 的关系是：情侣" in identity_text
+    assert bot_text.startswith("<bot_relationship_context>")
+    assert "你和群友小明（QQ：2001）的关系是：朋友" in bot_text
+    assert "- QQ号：9999" not in identity_text
+    report = latest_llm_report(plugin.logger)
+    assert report["bot_prompt_injected"] is True
+    assert report["relationship_edge_count"] == 1
+
+    monkeypatch.setattr(
+        plugin_module,
+        "request",
+        FakeRequest(body={"platform_id": "bot-a", "group_id": "1001"}),
+    )
+    reset = response_json(await plugin.reset_profile())
+    assert reset["relationship_injection_enabled"] is False
+    assert reset["relationship_nodes"] == []
+    assert reset["relationship_edges"] == []

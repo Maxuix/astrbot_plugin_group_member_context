@@ -1,5 +1,38 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.zip
+
+# Test and tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments and settings
+.venv/
+venv/
+.env
+.envrc
+.idea/
+.vscode/
+
+# Local/editor artifacts
+.DS_Store
+design-qa.md
+
+# AstrBot runtime data; plugin data must use AstrBot KV storage instead
+/data/
+
+# Local development instructions
+# Byte-compiled / optimized / DLL files
+__pycache__/
 *.py[codz]
 *$py.class
 
@@ -212,3 +245,9 @@ __marimo__/
 .vscode/
 design-qa.md
 *.zip
+
+# AstrBot runtime data; plugin data must use AstrBot KV storage instead
+/data/
+
+# Local development instructions
+AGENTS.md

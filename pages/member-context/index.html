@@ -57,7 +57,7 @@
           <h2 id="reset-confirm-title">确认完全重置</h2>
           <p id="reset-confirm-group" class="reset-confirm-group"></p>
           <p id="reset-confirm-description" class="reset-confirm-description">
-            将清空本群所有成员的外号、真名、昵称、自定义字段值和补充说明，并将使用规则恢复为默认内容。
+            将清空本群所有成员的外号、真名、昵称、自定义字段值和补充说明，清空关系网，并将使用规则恢复为默认内容。
             群成员列表、平台昵称、群名片和本群字段名称会保留，此操作不可撤销。
           </p>
           <div class="reset-dialog-actions">
@@ -271,6 +271,33 @@
               </div>
             </div>
 
+            <div class="editor-tabs" role="tablist" aria-label="本群工作区">
+              <button
+                id="tab-identity"
+                class="editor-tab is-active"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                aria-controls="identity-pane"
+              >
+                02A 身份资料
+              </button>
+              <button
+                id="tab-relationships"
+                class="editor-tab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="relationship-pane"
+              >
+                02B 关系网络
+              </button>
+            </div>
+            <p id="relationships-beta-note" class="editor-tabs-note" role="note">
+              关系网络：开发中功能，可能不可用
+            </p>
+
+            <div id="identity-pane" class="editor-pane" role="tabpanel" aria-labelledby="tab-identity">
             <div class="member-toolbar">
               <div class="toolbar-title">
                 <span class="toolbar-index">03</span>
@@ -366,6 +393,99 @@
                 下一页
               </button>
             </nav>
+            </div>
+
+            <div id="relationship-pane" class="editor-pane hidden" role="tabpanel" aria-labelledby="tab-relationships" hidden>
+              <section class="relationship-panel" aria-labelledby="relationship-title">
+                <div class="preview-heading">
+                  <div class="subsection-heading">
+                    <span class="subsection-index">04</span>
+                    <h3 id="relationship-title">关系网络</h3>
+                  </div>
+                  <div class="relationship-heading-actions">
+                    <label class="config-switch" for="relationship-enabled">
+                      <input id="relationship-enabled" class="config-switch-input" type="checkbox" role="switch" />
+                      <span class="config-switch-track" aria-hidden="true"></span>
+                      <span class="config-switch-text">将关系网注入上下文</span>
+                    </label>
+                    <button id="save-profile-graph" class="button button-primary" type="button">
+                      保存本群设定
+                    </button>
+                  </div>
+                </div>
+                <p id="graph-status" class="muted">0 人 · 0 机器人 · 0 条关系</p>
+                <div class="graph-type-bar">
+                  <div id="graph-type-list" class="graph-type-list" role="listbox" aria-label="关系线"></div>
+                  <div class="graph-custom-form">
+                    <input id="graph-custom-name" class="text-input" type="text" maxlength="16" placeholder="自定义关系名" />
+                    <label class="graph-inline-check" for="graph-custom-directed">
+                      <input id="graph-custom-directed" type="checkbox" />
+                      有向
+                    </label>
+                    <button id="graph-custom-add" class="button button-small button-secondary" type="button">添加</button>
+                  </div>
+                </div>
+                <div class="graph-shell">
+                  <div class="graph-stage">
+                    <div class="graph-toolbar">
+                      <button id="graph-fit" class="button button-small button-secondary" type="button">适应</button>
+                      <button id="graph-layout" class="button button-small button-secondary" type="button">整理</button>
+                      <button id="graph-reverse" class="button button-small button-secondary" type="button">对调方向</button>
+                      <button id="graph-delete" class="button button-small button-secondary" type="button">删除</button>
+                      <button id="graph-cleanup" class="button button-small button-secondary" type="button">清理已退群</button>
+                      <button id="graph-clear" class="button button-small button-danger" type="button">清空</button>
+                      <p id="graph-hint" class="graph-hint">点选一种关系线，再依次点击两个头像即可连接</p>
+                    </div>
+                    <div id="graph-viewport" class="graph-viewport">
+                      <div id="graph-empty" class="graph-empty">从右侧把成员拖进来。点选上方关系线后，依次点击两个头像即可连线；未选关系线时拖头像是移动位置。</div>
+                      <div id="graph-world" class="graph-world">
+                        <svg id="graph-edges" class="graph-edges" viewBox="-8000 -8000 16000 16000"></svg>
+                        <div id="graph-nodes" class="graph-nodes"></div>
+                      </div>
+                      <div id="graph-menu" class="graph-menu hidden" role="menu"></div>
+                      <div id="graph-clear-dialog" class="graph-clear-dialog hidden" role="dialog" aria-modal="true">
+                        <div class="graph-clear-card">
+                          <p class="dialog-kicker">DESTRUCTIVE ACTION / CONFIRM</p>
+                          <h3>清空关系网</h3>
+                          <p>将删除画布上的全部节点和连线，不会改动成员身份资料。此操作在保存前仍可刷新放弃。</p>
+                          <div class="graph-clear-actions">
+                            <button id="graph-clear-cancel" class="button button-secondary" type="button">取消</button>
+                            <button id="graph-clear-confirm" class="button button-danger" type="button">确认清空</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <aside class="graph-library">
+                    <p class="graph-type-kicker">成员库</p>
+                    <input
+                      id="graph-library-search"
+                      class="text-input"
+                      type="search"
+                      placeholder="搜索 QQ / 平台昵称 / 群备注"
+                      autocomplete="off"
+                    />
+                    <div id="graph-library-list" class="graph-library-list"></div>
+                  </aside>
+                </div>
+                <div class="graph-live-preview">
+                  <section>
+                    <div class="subsection-heading">
+                      <span class="subsection-index">A</span>
+                      <h3>群成员关系</h3>
+                    </div>
+                    <pre id="peer-relationship-preview">尚无人与人的关系。</pre>
+                  </section>
+                  <section>
+                    <div class="subsection-heading">
+                      <span class="subsection-index">B</span>
+                      <h3>你与群成员的关系</h3>
+                    </div>
+                    <pre id="bot-relationship-preview">尚无你与群友的关系。</pre>
+                  </section>
+                </div>
+              </section>
+            </div>
 
             <section class="usage-rules-panel">
               <div class="preview-heading">

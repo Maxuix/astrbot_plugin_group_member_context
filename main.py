@@ -31,6 +31,7 @@ from astrbot.core.star.filter.command import GreedyStr
 from .identity_card import IDENTITY_CARD_TEMPLATE
 
 from .member_context import (
+    BOT_RELATIONSHIP_MARKER,
     DEFAULT_MESSAGE_WINDOW_SIZE,
     DEFAULT_USAGE_RULES,
     LOG_DETAIL_FULL,
@@ -41,10 +42,13 @@ from .member_context import (
     MAX_TEXT_LENGTH,
     MAX_MESSAGE_WINDOW_SIZE,
     STORE_VERSION,
+    build_bot_relationship_prompt,
     build_identity_prompt,
     build_session_key,
     clean_text,
     clear_member_identity,
+    collect_window_participant_ids,
+    empty_relationship_graph,
     has_custom_identity,
     merge_remote_members,
     normalize_custom_identity_fields,
@@ -56,15 +60,19 @@ from .member_context import (
     normalize_match_text,
     normalize_member,
     normalize_qq_id_list,
+    normalize_relationship_graph,
     normalize_revision,
     normalize_store,
     normalize_usage_rules,
+    relationship_graph_is_empty,
     select_members_for_window,
+    select_relationships_for_window,
 )
 
 PLUGIN_NAME = "astrbot_plugin_group_member_context"
 STORE_KEY = "group_member_profiles"
 PROMPT_MARKER = "<group_member_identity_context>"
+BOT_PROMPT_MARKER = BOT_RELATIONSHIP_MARKER
 LLM_INJECTION_LOG_MARKER = "astrbot_plugin_group_member_context.llm_injection"
 WINDOW_RECORDED_EXTRA = "_group_member_context_window_recorded"
 MAX_WINDOW_MESSAGE_TEXT_LENGTH = 4000
@@ -392,6 +400,7 @@ class Main(Star):
         self,
         report: Mapping[str, Any],
         prompt: str = "",
+        bot_prompt: str = "",
     ) -> None:
         """Write one compact JSON report through AstrBot's plugin logger."""
 
@@ -399,6 +408,7 @@ class Main(Star):
             payload = dict(report)
             if self._configured_log_detail() == LOG_DETAIL_FULL:
                 payload["prompt"] = prompt
+                payload["bot_prompt"] = bot_prompt
             self.logger.info(
                 "%s %s",
                 LLM_INJECTION_LOG_MARKER,
@@ -696,6 +706,7 @@ class Main(Star):
                 payload.get("message_window_size", DEFAULT_MESSAGE_WINDOW_SIZE)
             ),
             "updated_at": datetime.now(timezone.utc).isoformat(),
+            **normalize_relationship_graph(payload),
         }
         return session_key, profile
 
@@ -704,6 +715,86 @@ class Main(Star):
         return clean_text(profile.get("group_name"), max_length=200) or str(
             profile.get("group_id", "")
         )
+
+    @staticmethod
+    def _profile_has_local_data(profile: Mapping[str, Any]) -> bool:
+        members = profile.get("members", [])
+        return bool(
+            normalize_usage_rules(profile.get("usage_rules")) != DEFAULT_USAGE_RULES
+            or any(
+                has_custom_identity(member)
+                for member in members
+                if isinstance(member, Mapping)
+            )
+            or bool(normalize_qq_id_list(profile.get(ADMIN_COMMAND_WHITELIST_KEY, [])))
+            or bool(normalize_qq_id_list(profile.get(ADMIN_COMMAND_BLACKLIST_KEY, [])))
+            or normalize_enabled(
+                profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
+                default=False,
+            )
+            or not relationship_graph_is_empty(profile)
+        )
+
+    @staticmethod
+    def _empty_bot_snapshot() -> dict[str, str]:
+        return {"user_id": "", "nickname": ""}
+
+    @staticmethod
+    def _bot_snapshot_from_login(raw: object) -> dict[str, str]:
+        if not isinstance(raw, Mapping):
+            return Main._empty_bot_snapshot()
+        payload = raw.get("data") if isinstance(raw.get("data"), Mapping) else raw
+        if not isinstance(payload, Mapping):
+            return Main._empty_bot_snapshot()
+        user_id = normalize_id(payload.get("user_id") or payload.get("userId"))
+        return {
+            "user_id": user_id,
+            "nickname": clean_text(payload.get("nickname") or payload.get("nick")),
+        }
+
+    def _build_profile_prompts(
+        self,
+        profile: Mapping[str, Any],
+        *,
+        self_id: object = "",
+        window_messages: list[dict[str, Any]] | None = None,
+        match_reasons: Mapping[str, Mapping[str, Any]] | None = None,
+        active_members: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, str]:
+        custom_identity_fields = self._profile_custom_identity_fields(profile)
+        exclude_ids = [normalize_id(self_id)] if normalize_id(self_id) else []
+        participant_ids = None
+        if window_messages is not None:
+            participant_ids = collect_window_participant_ids(
+                window_messages,
+                profile.get("members", []),
+                custom_identity_fields=custom_identity_fields,
+                exclude_user_ids=exclude_ids,
+            )
+        graph = normalize_relationship_graph(profile)
+        identity_members = (
+            active_members
+            if active_members is not None
+            else profile.get("members", [])
+        )
+        identity_prompt = build_identity_prompt(
+            group_id=profile.get("group_id"),
+            group_name=profile.get("group_name", ""),
+            members=identity_members,
+            usage_rules=profile.get("usage_rules"),
+            match_reasons=match_reasons,
+            custom_identity_fields=custom_identity_fields,
+            self_id=self_id,
+            relationship_graph=graph,
+            window_participant_ids=participant_ids,
+            all_members=profile.get("members", []),
+        )
+        bot_prompt = build_bot_relationship_prompt(
+            members=profile.get("members", []),
+            relationship_graph=graph,
+            window_participant_ids=participant_ids,
+        )
+        return identity_prompt, bot_prompt
 
     async def list_groups(self):
         """Return current groups from every connected OneBot adapter."""
@@ -755,35 +846,7 @@ class Main(Star):
                         "group_id": group_id,
                         "group_name": group_name,
                         "available": True,
-                        "has_profile": bool(
-                            normalize_usage_rules(saved_profile.get("usage_rules"))
-                            != DEFAULT_USAGE_RULES
-                            or any(
-                                has_custom_identity(member)
-                                for member in saved_profile.get("members", [])
-                                if isinstance(member, Mapping)
-                            )
-                            or bool(
-                                normalize_qq_id_list(
-                                    saved_profile.get(
-                                        ADMIN_COMMAND_WHITELIST_KEY,
-                                        [],
-                                    )
-                                )
-                            )
-                            or bool(
-                                normalize_qq_id_list(
-                                    saved_profile.get(
-                                        ADMIN_COMMAND_BLACKLIST_KEY,
-                                        [],
-                                    )
-                                )
-                            )
-                            or normalize_enabled(
-                                saved_profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
-                                default=False,
-                            )
-                        ),
+                        "has_profile": self._profile_has_local_data(saved_profile),
                         "member_count": len(saved_profile.get("members", [])),
                         "injection_enabled": normalize_enabled(
                             saved_profile.get("injection_enabled"),
@@ -810,29 +873,7 @@ class Main(Star):
                     "group_id": group_id,
                     "group_name": self._group_label(profile),
                     "available": False,
-                    "has_profile": bool(
-                        normalize_usage_rules(profile.get("usage_rules"))
-                        != DEFAULT_USAGE_RULES
-                        or any(
-                            has_custom_identity(member)
-                            for member in profile.get("members", [])
-                            if isinstance(member, Mapping)
-                        )
-                        or bool(
-                            normalize_qq_id_list(
-                                profile.get(ADMIN_COMMAND_WHITELIST_KEY, [])
-                            )
-                        )
-                        or bool(
-                            normalize_qq_id_list(
-                                profile.get(ADMIN_COMMAND_BLACKLIST_KEY, [])
-                            )
-                        )
-                        or normalize_enabled(
-                            profile.get(ALLOW_MEMBER_ADMIN_COMMANDS_KEY),
-                            default=False,
-                        )
-                    ),
+                    "has_profile": self._profile_has_local_data(profile),
                     "member_count": len(profile.get("members", [])),
                     "injection_enabled": normalize_enabled(
                         profile.get("injection_enabled"),
@@ -1101,6 +1142,21 @@ class Main(Star):
             if isinstance(profile, Mapping)
             else ""
         )
+        bot = self._empty_bot_snapshot()
+        try:
+            bot = self._bot_snapshot_from_login(
+                await self._call_onebot_action(platform, "get_login_info")
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "读取 OneBot 登录号失败 platform=%s group=%s: %s",
+                platform_id,
+                group_id,
+                exc,
+            )
+        graph = normalize_relationship_graph(
+            profile if isinstance(profile, Mapping) else {}
+        )
         return json_response(
             {
                 "session_key": session_key,
@@ -1108,6 +1164,7 @@ class Main(Star):
                 "group_id": group_id,
                 "group_name": group_name,
                 "members": members,
+                "bot": bot,
                 "custom_identity_fields": self._profile_custom_identity_fields(
                     profile if isinstance(profile, Mapping) else {}
                 ),
@@ -1141,6 +1198,7 @@ class Main(Star):
                 ),
                 "default_usage_rules": DEFAULT_USAGE_RULES,
                 "message_window_size": self._configured_message_window_size(),
+                **graph,
             }
         )
 
@@ -1153,12 +1211,13 @@ class Main(Star):
         try:
             session_key, profile = self._profile_from_payload(payload)
             custom_identity_fields = self._profile_custom_identity_fields(profile)
-            prompt = build_identity_prompt(
-                group_id=profile["group_id"],
-                group_name=profile["group_name"],
-                members=profile["members"],
-                usage_rules=profile["usage_rules"],
-                custom_identity_fields=custom_identity_fields,
+            bot_user_id = ""
+            raw_bot = payload.get("bot")
+            if isinstance(raw_bot, Mapping):
+                bot_user_id = normalize_id(raw_bot.get("user_id"))
+            prompt, bot_prompt = self._build_profile_prompts(
+                profile,
+                self_id=bot_user_id,
             )
         except ValueError as exc:
             return error_response(str(exc), status_code=400)
@@ -1200,6 +1259,10 @@ class Main(Star):
                 "revision": profile["revision"],
                 "message_window_size": self._configured_message_window_size(),
                 "prompt": prompt,
+                "bot_prompt": bot_prompt,
+                "relationship_injection_enabled": profile[
+                    "relationship_injection_enabled"
+                ],
             }
         )
 
@@ -1281,6 +1344,7 @@ class Main(Star):
                 "revision": current_revision + 1,
                 "message_window_size": self._configured_message_window_size(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
+                **empty_relationship_graph(),
             }
             sessions[session_key] = reset_profile
             await self._persist_store()
@@ -1304,6 +1368,7 @@ class Main(Star):
                 ],
                 "revision": reset_profile["revision"],
                 "message_window_size": self._configured_message_window_size(),
+                **empty_relationship_graph(),
             }
         )
 
@@ -1316,18 +1381,23 @@ class Main(Star):
         try:
             _, profile = self._profile_from_payload(payload)
             custom_identity_fields = self._profile_custom_identity_fields(profile)
-            prompt = build_identity_prompt(
-                group_id=profile["group_id"],
-                group_name=profile["group_name"],
-                members=profile["members"],
-                usage_rules=profile["usage_rules"],
-                custom_identity_fields=custom_identity_fields,
+            bot_user_id = ""
+            raw_bot = payload.get("bot")
+            if isinstance(raw_bot, Mapping):
+                bot_user_id = normalize_id(raw_bot.get("user_id"))
+            prompt, bot_prompt = self._build_profile_prompts(
+                profile,
+                self_id=bot_user_id,
             )
         except ValueError as exc:
             return error_response(str(exc), status_code=400)
         return json_response(
             {
                 "prompt": prompt,
+                "bot_prompt": bot_prompt,
+                "relationship_injection_enabled": profile[
+                    "relationship_injection_enabled"
+                ],
                 "custom_identity_fields": custom_identity_fields,
                 "injection_enabled": profile["injection_enabled"],
                 ADMIN_COMMAND_WHITELIST_KEY: profile[ADMIN_COMMAND_WHITELIST_KEY],
@@ -2190,8 +2260,13 @@ class Main(Star):
             "usage_rules_customized": False,
             "prompt_injected": False,
             "prompt_length": 0,
+            "relationship_edge_count": 0,
+            "bot_relationship_count": 0,
+            "bot_prompt_injected": False,
+            "bot_prompt_length": 0,
         }
         prompt = ""
+        bot_prompt = ""
         try:
             group_id = normalize_id(event.get_group_id())
             report["group_id"] = group_id
@@ -2252,25 +2327,41 @@ class Main(Star):
                 report["window_speaker_ids"],
                 report["window_direct_mention_ids"],
             ) = self._window_report_ids(window_messages)
+            self_id = normalize_id(event.get_self_id())
             active_members, match_reasons = select_members_for_window(
                 profile_members,
                 window_messages,
                 custom_identity_fields=custom_identity_fields,
+                exclude_user_ids=[self_id] if self_id else [],
             )
             report["injected_member_ids"] = [
                 member["user_id"] for member in active_members
             ]
             report["match_reasons"] = self._match_reasons_for_log(match_reasons)
-            prompt = build_identity_prompt(
-                group_id=group_id,
-                group_name=profile.get("group_name", ""),
-                members=active_members,
-                usage_rules=normalized_usage_rules,
-                match_reasons=match_reasons,
+            graph = normalize_relationship_graph(profile)
+            participant_ids = collect_window_participant_ids(
+                window_messages,
+                profile_members,
                 custom_identity_fields=custom_identity_fields,
+                exclude_user_ids=[self_id] if self_id else [],
+            )
+            if graph["relationship_injection_enabled"]:
+                selection = select_relationships_for_window(
+                    graph,
+                    window_participant_ids=participant_ids,
+                )
+                report["relationship_edge_count"] = len(selection["peer_edges"])
+                report["bot_relationship_count"] = len(selection["bot_edges"])
+            prompt, bot_prompt = self._build_profile_prompts(
+                profile,
+                self_id=self_id,
+                window_messages=window_messages,
+                match_reasons=match_reasons,
+                active_members=active_members,
             )
             report["prompt_length"] = len(prompt)
-            if not prompt:
+            report["bot_prompt_length"] = len(bot_prompt)
+            if not prompt and not bot_prompt:
                 report["reason"] = "no_matching_member_or_custom_usage_rules"
                 return
 
@@ -2278,24 +2369,35 @@ class Main(Star):
             if parts is None:
                 req.extra_user_content_parts = []
                 parts = req.extra_user_content_parts
-            if any(
-                isinstance(getattr(part, "text", None), str)
-                and part.text.startswith(PROMPT_MARKER)
+            existing_texts = [
+                part.text
                 for part in parts
+                if isinstance(getattr(part, "text", None), str)
+            ]
+            if any(
+                text.startswith(PROMPT_MARKER) or text.startswith(BOT_PROMPT_MARKER)
+                for text in existing_texts
             ):
                 report["status"] = "duplicate"
                 report["reason"] = "prompt_marker_already_present"
                 return
-            parts.append(TextPart(text=prompt).mark_as_temp())
+            if prompt:
+                parts.append(TextPart(text=prompt).mark_as_temp())
+                report["prompt_injected"] = True
+            if bot_prompt:
+                parts.append(TextPart(text=bot_prompt).mark_as_temp())
+                report["bot_prompt_injected"] = True
             report["status"] = "injected"
-            report["reason"] = (
-                "matched_members" if active_members else "usage_rules_only"
-            )
-            report["prompt_injected"] = True
+            if active_members:
+                report["reason"] = "matched_members"
+            elif report["relationship_edge_count"] or report["bot_relationship_count"]:
+                report["reason"] = "relationships_only"
+            else:
+                report["reason"] = "usage_rules_only"
         except Exception:
             report["status"] = "error"
             report["reason"] = "exception"
             # A plugin context helper must never make the main LLM request fail.
             self.logger.exception("注入群成员身份上下文失败。")
         finally:
-            self._log_llm_injection_report(report, prompt)
+            self._log_llm_injection_report(report, prompt, bot_prompt)

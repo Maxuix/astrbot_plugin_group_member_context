@@ -1,3 +1,5 @@
+import { createRelationshipGraph, emptyRelationshipGraph } from "./relationship-graph.js";
+
 const bridge = window.AstrBotPluginPage;
 
 const state = {
@@ -25,6 +27,9 @@ const state = {
   profileDirty: false,
   checkingProfileStatus: false,
   configDirty: false,
+  bot: { user_id: "", nickname: "" },
+  relationshipGraph: emptyRelationshipGraph(),
+  editorTab: "identity",
 };
 
 const elements = {
@@ -81,8 +86,25 @@ const elements = {
   resetUsageRules: document.getElementById("reset-usage-rules"),
   previewPrompt: document.getElementById("preview-prompt"),
   saveProfile: document.getElementById("save-profile"),
+  saveProfileGraph: document.getElementById("save-profile-graph"),
   promptOutput: document.getElementById("prompt-output"),
+  tabIdentity: document.getElementById("tab-identity"),
+  tabRelationships: document.getElementById("tab-relationships"),
+  identityPane: document.getElementById("identity-pane"),
+  relationshipPane: document.getElementById("relationship-pane"),
 };
+
+const relationshipGraph = createRelationshipGraph({
+  root: elements.relationshipPane,
+  getMembers: () => directoryMembers(),
+  getBot: () => state.bot,
+  getAvatarRevision: (userId) => state.avatarVersions.get(String(userId)) || "",
+  onChange(graph) {
+    state.relationshipGraph = graph;
+    markProfileDirty();
+  },
+  onNotice: showNotice,
+});
 
 function showNotice(message, kind = "info") {
   elements.notice.textContent = message || "";
@@ -115,7 +137,50 @@ function selectedPayload() {
     admin_command_blacklist: state.adminCommandBlacklist,
     allow_members_admin_commands: state.allowMemberAdminCommands,
     revision: state.profileRevision,
+    bot: state.bot,
+    ...state.relationshipGraph,
   };
+}
+
+function directoryMembers() {
+  const botId = String(state.bot?.user_id || "");
+  if (!botId) return state.members;
+  return state.members.filter((member) => String(member.user_id) !== botId);
+}
+
+function applyEditorTab(tab) {
+  state.editorTab = tab === "relationships" ? "relationships" : "identity";
+  const showRelationships = state.editorTab === "relationships";
+  elements.tabIdentity.classList.toggle("is-active", !showRelationships);
+  elements.tabRelationships.classList.toggle("is-active", showRelationships);
+  elements.tabIdentity.setAttribute("aria-selected", String(!showRelationships));
+  elements.tabRelationships.setAttribute("aria-selected", String(showRelationships));
+  elements.identityPane.classList.toggle("hidden", showRelationships);
+  elements.relationshipPane.classList.toggle("hidden", !showRelationships);
+  elements.relationshipPane.hidden = !showRelationships;
+  if (showRelationships) relationshipGraph.show();
+}
+
+function applyRelationshipGraph(graph) {
+  const source = graph && typeof graph === "object" ? graph : {};
+  state.relationshipGraph = {
+    relationship_injection_enabled: source.relationship_injection_enabled === true,
+    relationship_types: Array.isArray(source.relationship_types)
+      ? source.relationship_types
+      : [],
+    relationship_nodes: Array.isArray(source.relationship_nodes)
+      ? source.relationship_nodes
+      : [],
+    relationship_edges: Array.isArray(source.relationship_edges)
+      ? source.relationship_edges
+      : [],
+  };
+  relationshipGraph.setGraph(state.relationshipGraph);
+}
+
+function combinedPromptText(result) {
+  return [result?.prompt, result?.bot_prompt].filter(Boolean).join("\n\n")
+    || "当前没有可注入的成员资料。";
 }
 
 function markProfileDirty() {
@@ -464,7 +529,7 @@ function hasConfiguredIdentity(member) {
 
 function filteredMembers() {
   const query = normalizedSearchValue(state.memberSearch);
-  return state.members.filter(
+  return directoryMembers().filter(
     (member) =>
       memberMatchesSearch(member, query)
       && (!state.showConfiguredOnly || hasConfiguredIdentity(member)),
@@ -959,6 +1024,7 @@ function renderMembers({ scrollToFirst = false, forceAvatarCheck = false } = {})
       emptyText,
     );
     elements.members.appendChild(empty);
+    relationshipGraph.refresh();
     return;
   }
 
@@ -979,6 +1045,7 @@ function renderMembers({ scrollToFirst = false, forceAvatarCheck = false } = {})
       });
     });
   }
+  relationshipGraph.refresh();
 }
 
 async function refreshMembers({ quiet = false } = {}) {
@@ -1006,6 +1073,10 @@ async function refreshMembers({ quiet = false } = {}) {
     state.profileDirty = false;
     applyGroupInjectionState(result.injection_enabled !== false);
     applyGroupPolicy(result);
+    state.bot = result.bot && typeof result.bot === "object"
+      ? { user_id: String(result.bot.user_id || ""), nickname: String(result.bot.nickname || "") }
+      : { user_id: "", nickname: "" };
+    applyRelationshipGraph(result);
     elements.usageRules.value = state.usageRules;
     renderCustomIdentityFields();
     if (result.group_name) state.selectedGroup.group_name = result.group_name;
@@ -1055,8 +1126,7 @@ async function previewPrompt() {
   elements.previewPrompt.disabled = true;
   try {
     const result = await bridge.apiPost("preview", payload);
-    elements.promptOutput.textContent =
-      result.prompt || "当前没有可注入的成员资料。";
+    elements.promptOutput.textContent = combinedPromptText(result);
     showNotice("Prompt 预览已更新。", "success");
   } catch (error) {
     showNotice(error.message || "生成 Prompt 失败。", "error");
@@ -1065,15 +1135,19 @@ async function previewPrompt() {
   }
 }
 
+function setSaveButtonsDisabled(disabled) {
+  elements.saveProfile.disabled = disabled;
+  elements.saveGroupPolicy.disabled = disabled;
+  if (elements.saveProfileGraph) elements.saveProfileGraph.disabled = disabled;
+}
+
 async function saveProfile() {
   const payload = selectedPayload();
   if (!payload) return;
-  elements.saveProfile.disabled = true;
-  elements.saveGroupPolicy.disabled = true;
+  setSaveButtonsDisabled(true);
   try {
     const result = await bridge.apiPost("profiles", payload);
-    elements.promptOutput.textContent =
-      result.prompt || "当前没有可注入的成员资料。";
+    elements.promptOutput.textContent = combinedPromptText(result);
     if (result.default_usage_rules) {
       state.defaultUsageRules = result.default_usage_rules;
     }
@@ -1098,6 +1172,9 @@ async function saveProfile() {
         || state.adminCommandWhitelist.length
         || state.adminCommandBlacklist.length
         || state.allowMemberAdminCommands
+        || state.relationshipGraph.relationship_injection_enabled
+        || state.relationshipGraph.relationship_nodes.length
+        || state.relationshipGraph.relationship_edges.length
       );
       selected.member_count = state.members.length;
       selected.revision = state.profileRevision;
@@ -1112,8 +1189,7 @@ async function saveProfile() {
   } catch (error) {
     showNotice(error.message || "保存设定失败。", "error");
   } finally {
-    elements.saveProfile.disabled = false;
-    elements.saveGroupPolicy.disabled = false;
+    setSaveButtonsDisabled(false);
   }
 }
 
@@ -1156,6 +1232,7 @@ async function performResetProfile() {
     state.profileDirty = false;
     applyGroupInjectionState(result.injection_enabled !== false);
     applyGroupPolicy(result);
+    applyRelationshipGraph(result);
     state.memberSearch = "";
     state.memberPage = 1;
     state.showConfiguredOnly = false;
@@ -1212,6 +1289,9 @@ function selectGroup() {
   closeAdminPolicyPickers();
   applyGroupPolicy({});
   applyGroupInjectionState(selected?.injection_enabled !== false);
+  state.bot = { user_id: "", nickname: "" };
+  applyRelationshipGraph(emptyRelationshipGraph());
+  applyEditorTab("identity");
   state.avatarCheckGeneration += 1;
   state.avatarCheckedIds.clear();
   elements.usageRules.value = "";
@@ -1274,6 +1354,9 @@ async function init() {
   });
   elements.previewPrompt.addEventListener("click", previewPrompt);
   elements.saveProfile.addEventListener("click", saveProfile);
+  elements.saveProfileGraph?.addEventListener("click", saveProfile);
+  elements.tabIdentity.addEventListener("click", () => applyEditorTab("identity"));
+  elements.tabRelationships.addEventListener("click", () => applyEditorTab("relationships"));
   elements.usageRules.addEventListener("input", () => {
     state.usageRules = elements.usageRules.value;
     markProfileDirty();
