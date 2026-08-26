@@ -1281,6 +1281,17 @@ pre {
   transform: translateY(1px);
 }
 
+.relationship-title-heading {
+  flex-wrap: wrap;
+}
+
+.relationship-title-heading .muted {
+  max-width: none;
+  margin: 0;
+  font-size: 11px;
+  text-align: left;
+}
+
 .relationship-heading-actions .config-switch {
   margin-top: 0;
 }
@@ -1292,6 +1303,17 @@ pre {
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.relationship-beta-note,
+.graph-chip-bot .graph-chip-badge,
+.graph-node-bot .graph-node-name,
+.graph-node-bot .graph-node-badge {
+  text-shadow:
+    -1px -1px 0 var(--surface-inverse),
+    1px -1px 0 var(--surface-inverse),
+    -1px 1px 0 var(--surface-inverse),
+    1px 1px 0 var(--surface-inverse);
 }
 
 .relationship-panel {
@@ -1742,6 +1764,7 @@ pre {
   overflow: auto;
   border: 1px solid var(--line);
   background: var(--paper-deep);
+  color: var(--ink);
   white-space: pre-wrap;
 }
 
